@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(cdb2)
 set(CMAKE_BUILD_TYPE RelWithDebInfo)
-add_compile_options(-Wall -Wextra -Werror)
+add_compile_options(-Wall -Wextra -pedantic -Werror)
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
