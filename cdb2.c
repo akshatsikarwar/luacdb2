@@ -8,8 +8,6 @@
 #include <cdb2api.h>
 
 #define MAX_PARAMS 32
-#define SINGLE_ROW 1
-#define WRITE_STMT 2
 
 typedef lua_State *Lua;
 
@@ -17,8 +15,6 @@ struct cdb2_async;
 
 struct cdb2 {
     int running;
-    int is_single_row;
-    int is_write_stmt;
     cdb2_hndl_tp *db;
     int n_params;
     void *params[32];
@@ -35,50 +31,6 @@ struct cdb2_async {
 };
 
 static int run_statement(Lua);
-
-static void check_run_statement_flags(Lua L, struct cdb2 *cdb2)
-{
-    cdb2->is_write_stmt = cdb2->is_single_row = 0;
-    if (lua_gettop(L) == 3) {
-        int val = lua_tointeger(L, 3);
-        if (val == WRITE_STMT) {
-            cdb2->is_write_stmt = 1;
-        } else if (val == SINGLE_ROW) {
-            cdb2->is_single_row = 1;
-        } else {
-            luaL_argerror(L, 3, "expected SINGLE_ROW/WRITE_STMT");
-        }
-    }
-}
-
-static void check_ok_done_for_single_row(Lua L, struct cdb2 *cdb2)
-{
-    if (!cdb2->running && !cdb2->is_single_row) return;
-    if (cdb2_next_record(cdb2->db) != CDB2_OK_DONE) luaL_error(L, "unexpected row");
-    cdb2->running = 0;
-}
-
-static int consume_write_stmt(Lua L, struct cdb2 *cdb2)
-{
-    int rc;
-    if ((rc = cdb2_next_record(cdb2->db)) == CDB2_OK_DONE) return 0;
-    if (rc != CDB2_OK) return luaL_error(L, cdb2_errstr(cdb2->db));
-    if (cdb2_numcolumns(cdb2->db) != 1 ||
-        (
-            strcmp(cdb2_column_name(cdb2->db, 0), "version") != 0 &&
-            strcmp(cdb2_column_name(cdb2->db, 0), "rows deleted") != 0 &&
-            strcmp(cdb2_column_name(cdb2->db, 0), "rows inserted") != 0 &&
-            strcmp(cdb2_column_name(cdb2->db, 0), "rows updated") != 0
-        )
-    ){
-        char err[512];
-        snprintf(err, sizeof(err), "unexpected response #cols:%d '%s'",
-                cdb2_numcolumns(cdb2->db), cdb2_column_name(cdb2->db, 0));
-        return luaL_error(L, err);
-    }
-    if (cdb2_next_record(cdb2->db) == CDB2_OK_DONE) return 0;
-    return luaL_error(L, cdb2_errstr(cdb2->db));
-}
 
 static void clear_params(struct cdb2 *cdb2)
 {
@@ -146,25 +98,22 @@ static int comdb2(Lua L)
 static int __gc(Lua L)
 {
     struct cdb2 *cdb2 = lua_touserdata(L, -1);
-    check_ok_done_for_single_row(L, cdb2);
     if (cdb2->running || cdb2->async) {
         fprintf(stderr,  "closing active db handle\n");
     }
-    cdb2_close(cdb2->db);
+    if (cdb2->db) cdb2_close(cdb2->db);
     return 0;
 }
 
 static int begin(Lua L)
 {
     lua_pushstring(L, "begin");
-    lua_pushinteger(L, WRITE_STMT);
     return run_statement(L);
 }
 
 static int bind(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    check_ok_done_for_single_row(L, cdb2);
     if (cdb2->running || cdb2->async) {
         return luaL_error(L, "statement already active");
     }
@@ -208,6 +157,10 @@ static int column_value(Lua L)
         return luaL_error(L, "no active statement");
     }
     int column = luaL_checkinteger(L, 2) - 1;
+    if (cdb2_column_value(cdb2->db, column) == NULL) {
+        lua_pushnil(L);
+        return 1;
+    }
     switch (cdb2_column_type(cdb2->db, column)) {
     case CDB2_CSTRING: lua_pushstring(L, cdb2_column_value(cdb2->db, column)); break;
     case CDB2_INTEGER: lua_pushinteger(L, *(int64_t *)cdb2_column_value(cdb2->db, column)); break;
@@ -217,24 +170,39 @@ static int column_value(Lua L)
     return 1;
 }
 
+static int comdb2_close(Lua L)
+{
+    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
+    if (cdb2->running) return luaL_error(L,  "closing active db handle");
+    cdb2_close(cdb2->db);
+    cdb2->db = NULL;
+    return 0;
+}
+
 static int commit(Lua L)
 {
     lua_pushstring(L, "commit");
-    lua_pushinteger(L, WRITE_STMT);
     return run_statement(L);
+}
+
+static int drain(Lua L)
+{
+    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
+    if (!cdb2->running) return luaL_error(L, "no active statement");
+    if (cdb2->async && async_result(cdb2)) return luaL_error(L, cdb2_errstr(cdb2->db));
+    int rc;
+    while ((rc = cdb2_next_record(cdb2->db)) == CDB2_OK)
+        ;
+    if (rc != CDB2_OK_DONE) return luaL_error(L, cdb2_errstr(cdb2->db));
+    cdb2->running = 0;
+    return 0;
 }
 
 static int next_record(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->async) {
-        if (async_result(cdb2)) {
-            luaL_error(L, cdb2_errstr(cdb2->db));
-        }
-    }
-    if (!cdb2->running) {
-        return luaL_error(L, "no active statement");
-    }
+    if (!cdb2->running) return luaL_error(L, "no active statement");
+    if (cdb2->async && async_result(cdb2)) return luaL_error(L, cdb2_errstr(cdb2->db));
     int rc = cdb2_next_record(cdb2->db);
     if (rc == CDB2_OK) {
         lua_pushboolean(L, 1);
@@ -260,40 +228,32 @@ static int num_columns(Lua L)
 static int rollback(Lua L)
 {
     lua_pushstring(L, "rollback");
-    lua_pushinteger(L, WRITE_STMT);
     return run_statement(L);
 }
 
 static int run_statement(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    check_ok_done_for_single_row(L, cdb2);
     if (cdb2->running || cdb2->async) {
         return luaL_error(L, "statement already active");
     }
     const char *sql = luaL_checkstring(L, 2);
-    check_run_statement_flags(L, cdb2);
     if (cdb2_run_statement(cdb2->db, sql) != 0) {
         return luaL_error(L, cdb2_errstr(cdb2->db));
     }
     clear_params(cdb2);
-    if (cdb2->is_write_stmt) {
-        consume_write_stmt(L, cdb2);
-    } else {
-        cdb2->running = 1;
-    }
+    cdb2->running = 1;
     return 0;
 }
 
 static int run_statement_async(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    check_ok_done_for_single_row(L, cdb2);
     if (cdb2->running || cdb2->async) {
         return luaL_error(L, "statement already active");
     }
     const char *sql = luaL_checkstring(L, 2);
-    check_run_statement_flags(L, cdb2);
+    cdb2->running = 1;
     cdb2->async = calloc(1, sizeof(struct cdb2_async));
     cdb2->async->sql = strdup(sql);
     pthread_mutex_init(&cdb2->async->lock, NULL);
@@ -311,32 +271,11 @@ static int set_isolation(Lua L)
     snprintf(isolation, sizeof(isolation), "set transaction %s", sql);
     lua_pop(L, 1);
     lua_pushstring(L, isolation);
-    lua_pushinteger(L, WRITE_STMT);
     return run_statement(L);
-}
-
-static int await(Lua L)
-{
-    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (!cdb2->async) return luaL_error(L, "no active statement");
-    if (!cdb2->is_write_stmt) return luaL_error(L, "no write statement");
-    if (async_result(cdb2)) {
-        luaL_error(L, cdb2_errstr(cdb2->db));
-    }
-    if (cdb2->is_write_stmt) {
-        consume_write_stmt(L, cdb2);
-    }
-    return 0;
 }
 
 static void init_cdb2(Lua L)
 {
-    lua_pushinteger(L, SINGLE_ROW);
-    lua_setglobal(L, "SINGLE_ROW");
-
-    lua_pushinteger(L, WRITE_STMT);
-    lua_setglobal(L, "WRITE_STMT");
-
     lua_pushcfunction(L, comdb2);
     lua_setglobal(L, "comdb2");
 
@@ -345,14 +284,15 @@ static void init_cdb2(Lua L)
         {"begin", begin},
         {"bind", bind},
         {"column_value", column_value},
+        {"close", comdb2_close},
         {"commit", commit},
+        {"drain", drain},
         {"next_record", next_record},
         {"num_columns", num_columns},
         {"rollback", rollback},
         {"run_statement", run_statement},
         {"run_statement_async", run_statement_async},
         {"set_isolation", set_isolation},
-        {"await", await},
         {NULL, NULL}
     };
     luaL_newmetatable(L, "cdb2");
