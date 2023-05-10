@@ -162,15 +162,6 @@ static int column_value(Lua L)
     return 1;
 }
 
-static int comdb2_close(Lua L)
-{
-    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running) return luaL_error(L,  "closing active db handle");
-    cdb2_close(cdb2->db);
-    cdb2->db = NULL;
-    return 0;
-}
-
 static int drain(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
@@ -290,7 +281,6 @@ static void init_cdb2(Lua L)
         {"__gc", __gc},
         {"async_stmt", async_stmt},
         {"bind", bind},
-        {"close", comdb2_close},
         {"column_value", column_value},
         {"drain", drain},
         {"next_record", next_record},
