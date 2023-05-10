@@ -18,7 +18,7 @@ else()
     set(ENV{PKG_CONFIG_PATH} /opt/bb/lib/pkgconfig)
     find_package(PkgConfig REQUIRED)
 
-    pkg_check_modules(LUA REQUIRED IMPORTED_TARGET lua51)
+    pkg_check_modules(LUA REQUIRED IMPORTED_TARGET lua53)
     pkg_check_modules(CDB2 REQUIRED IMPORTED_TARGET cdb2api)
 
     target_include_directories(luacdb2 PRIVATE ${CDB2_INCLUDE_DIRS} ${LUA_INCLUDE_DIRS})
