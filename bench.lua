@@ -7,6 +7,7 @@ dbs = {}
 function connect()
     dbname = "akdb"
     if #arg == 1 then dbname = arg[1] end
+    print("dbname:"..dbname)
     for i = 1, thds do
         table.insert(dbs, comdb2(dbname, "local"))
     end
@@ -65,7 +66,10 @@ end
 function test()
     connect()
     truncate()
-    db:wr_stmt("insert into t select value from generate_series(1, " .. tostring(total_rows) ..")")
+    print("thds:"..thds)
+    local ins = "insert into t select value from generate_series(1, " .. tostring(total_rows) ..")"
+    print(ins)
+    db:wr_stmt(ins)
     scon()
 
     num_verify = 0
