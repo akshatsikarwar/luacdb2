@@ -1,15 +1,18 @@
 #!/home/asikarw1/src/bench/build/luacdb2
 
-total_rows = 128
+total_rows = 256
 thds = 48
 dbs = {}
 
 function connect()
-    dbname = "akdb"
-    if #arg == 1 then dbname = arg[1] end
+    local dbname = "akdb"
+    local tier = "local"
+    if #arg >= 1 then dbname = arg[1] end
+    if #arg >= 2 then tier = arg[2] end
     print("dbname:"..dbname)
+    print("tier:"..tier)
     for i = 1, thds do
-        table.insert(dbs, comdb2(dbname, "local"))
+        table.insert(dbs, comdb2(dbname, tier))
     end
     db = dbs[1]
 end
@@ -27,8 +30,8 @@ function insert(total)
         dbs[i]:wr_stmt("begin")
     end
 
-    from = 1
-    per_thd = total / thds
+    local from = 1
+    local per_thd = total / thds
     for i = 1, thds do
         to = from + per_thd - 1;
         print("thd:"..i.." from:"..from.." to:"..to)
@@ -72,9 +75,9 @@ function test()
     db:wr_stmt(ins)
     scon()
 
-    num_verify = 0
-    count = 64 
-    comma = ""
+    local num_verify = 0
+    local count = 32
+    local comma = ""
     for i = 1, count do
         io.write(comma, i)
         io.flush()
