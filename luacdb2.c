@@ -1,9 +1,10 @@
 #include <pthread.h>
+#include <signal.h>
 #include <string.h>
 
+#include <lauxlib.h>
 #include <lua.h>
 #include <lualib.h>
-#include <lauxlib.h>
 
 #include <cdb2api.h>
 
@@ -300,6 +301,7 @@ static void init_cdb2(Lua L)
 
 int main(int argc, char **argv)
 {
+    signal(SIGPIPE, SIG_IGN);
     Lua L = luaL_newstate();
     luaL_openlibs(L);
     init_cdb2(L);
