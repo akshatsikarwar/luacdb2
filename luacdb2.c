@@ -40,7 +40,7 @@ static void clear_params(struct cdb2 *cdb2)
     cdb2_clearbindings(cdb2->db);
 }
 
-static void *run_async(void *data)
+static void *async_work(void *data)
 {
     struct cdb2 *cdb2 = data;
     struct cdb2_async *async = cdb2->async;
@@ -102,6 +102,25 @@ static int __gc(Lua L)
     if (cdb2->db) cdb2_close(cdb2->db);
     return 0;
 }
+
+static int async_stmt(Lua L)
+{
+    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
+    if (cdb2->running || cdb2->async) {
+        return luaL_error(L, "statement already active");
+    }
+    const char *sql = luaL_checkstring(L, 2);
+    cdb2->running = 1;
+    cdb2->async = calloc(1, sizeof(struct cdb2_async));
+    cdb2->async->sql = strdup(sql);
+    pthread_mutex_init(&cdb2->async->lock, NULL);
+    pthread_cond_init(&cdb2->async->cond, NULL);
+    if (pthread_create(&cdb2->async->thd, NULL, async_work, cdb2) != 0) {
+        return luaL_error(L, "failed to create async statement");
+    }
+    return 0;
+}
+
 
 static int bind(Lua L)
 {
@@ -214,24 +233,6 @@ static int rd_stmt(Lua L)
     }
     clear_params(cdb2);
     cdb2->running = 1;
-    return 0;
-}
-
-static int async_stmt(Lua L)
-{
-    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running || cdb2->async) {
-        return luaL_error(L, "statement already active");
-    }
-    const char *sql = luaL_checkstring(L, 2);
-    cdb2->running = 1;
-    cdb2->async = calloc(1, sizeof(struct cdb2_async));
-    cdb2->async->sql = strdup(sql);
-    pthread_mutex_init(&cdb2->async->lock, NULL);
-    pthread_cond_init(&cdb2->async->cond, NULL);
-    if (pthread_create(&cdb2->async->thd, NULL, run_async, cdb2) != 0) {
-        return luaL_error(L, "failed to create async statement");
-    }
     return 0;
 }
 
