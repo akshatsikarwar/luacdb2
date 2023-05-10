@@ -1,4 +1,4 @@
-#!/home/asikarw1/src/bench/build/cdb2
+#!/home/asikarw1/src/bench/build/luacdb2
 
 total_rows = 128
 thds = 48
