@@ -17,9 +17,7 @@ end
 function truncate()
     print('truncate')
     db:wr_stmt("drop table if exists t")
-    --db:wr_stmt("create table if not exists t(i integer unique)")
     db:wr_stmt("create table if not exists t(i integer unique, j integer unique, k integer unique)")
-    --db:wr_stmt("truncate table t")
 end
 
 function tbl_stats()

@@ -94,6 +94,12 @@ static int comdb2(Lua L)
     return 1;
 }
 
+static int comdb2_set_config(Lua L)
+{
+    cdb2_set_comdb2db_info(lua_tostring(L, 1));
+    return 0;
+}
+
 static int __gc(Lua L)
 {
     struct cdb2 *cdb2 = lua_touserdata(L, -1);
@@ -278,6 +284,9 @@ static void init_cdb2(Lua L)
     lua_pushcfunction(L, comdb2);
     lua_setglobal(L, "comdb2");
 
+    lua_pushcfunction(L, comdb2_set_config);
+    lua_setglobal(L, "comdb2_set_config");
+
     const struct luaL_Reg cdb2_funcs[] = {
         {"__gc", __gc},
         {"async_stmt", async_stmt},
@@ -300,6 +309,8 @@ static void init_cdb2(Lua L)
 
 int main(int argc, char **argv)
 {
+    const char *config_file = getenv("CDB2_CONFIG");
+    if (config_file) cdb2_set_comdb2db_config(config_file);
     signal(SIGPIPE, SIG_IGN);
     Lua L = luaL_newstate();
     luaL_openlibs(L);
