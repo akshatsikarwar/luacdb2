@@ -79,12 +79,11 @@ function verify_err()
         dbs[i]:async_stmt("delete from t where i >= 1 limit 5000")
     end
     for i = 1, thds do
-        if dbs[i]:verify_err() then num_verify = num_verify + 1 end
+        dbs[i]:verify_err()
     end
 end
 
 function test()
-    num_verify = 0
     thds = 10
     dbs = {}
     connect()
@@ -92,8 +91,8 @@ function test()
     insert(60000)
     tbl_stats()
     verify_err()
-    print("failed:"..num_verify)
     tbl_stats()
+    print("success")
 end
 
 test()

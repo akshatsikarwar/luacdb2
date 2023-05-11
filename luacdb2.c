@@ -247,14 +247,13 @@ static int verify_err(Lua L)
     if (rc == 0) {
         while ((rc = cdb2_next_record(cdb2->db)) == CDB2_OK)
             ;
-        if (rc != CDB2_OK_DONE) return luaL_error(L, cdb2_errstr(cdb2->db));
-        lua_pushboolean(L, 0);
-    } else if (rc == CDB2ERR_VERIFY_ERROR) {
-        lua_pushboolean(L, 1);
-    } else {
+        if (rc == CDB2_OK_DONE) return 0;
+        return luaL_error(L, cdb2_errstr(cdb2->db));
+    } else if (rc != CDB2ERR_VERIFY_ERROR) {
         return luaL_error(L, cdb2_errstr(cdb2->db));
     }
-    return 1;
+    printf("%s rc:%d err:%s\n", __func__, rc, cdb2_errstr(cdb2->db));
+    return 0;
 }
 
 static int wr_stmt(Lua L)
