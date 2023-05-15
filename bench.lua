@@ -17,13 +17,16 @@ end
 function truncate()
     print('truncate')
     db:wr_stmt("drop table if exists t")
-    db:wr_stmt("create table if not exists t(i integer unique, j integer unique, k integer unique)")
+    db:wr_stmt("create table if not exists t(i integer index)")
 end
 
 function tbl_stats()
     db:wr_stmt("put tunable parallel_count 1")
+    db:rd_stmt("select count(*) from t")
+    print("total rows:" .. db:column_value(1))
+    db:drain()
     db:rd_stmt("select min(i), max(i), count(i) from t")
-    print("min:".. db:column_value(1) .. " max:"..  db:column_value(2) .. " count:" .. db:column_value(3))
+    print("min:".. db:column_value(1) .. " max:"..  db:column_value(2))
     db:drain()
 end
 
@@ -72,21 +75,44 @@ function insert(total)
     end
 end
 
-function verify_err()
+function insert_from_all(total)
     for i = 1, thds do
-        dbs[i]:async_stmt("delete from t where i >= 1 limit 5000")
+        dbs[i]:wr_stmt("set transaction chunk 1000")
+        dbs[i]:wr_stmt("begin")
+        ins = string.format("insert into t(i) select value from generate_series(1, %d)", total)
+        print(ins)
+        dbs[i]:async_stmt(ins)
     end
     for i = 1, thds do
-        dbs[i]:verify_err()
+        dbs[i]:drain()
+    end
+    for i = 1, thds do
+        dbs[i]:async_stmt("commit")
+    end
+    for i = 1, thds do
+        dbs[i]:drain()
+    end
+end
+
+function verify_err()
+    for i = 1, 10 do
+        del=string.format("delete from t where i >= %d limit 5000", (i - 1) * 5000)
+        for j = 1, thds do
+            print(del)
+            dbs[j]:async_stmt(del)
+        end
+        for j = 1, thds do
+            dbs[j]:verify_err()
+        end
     end
 end
 
 function test()
-    thds = 10
+    thds = 8
     dbs = {}
     connect()
     truncate()
-    insert(60000)
+    insert_from_all(50000)
     tbl_stats()
     verify_err()
     tbl_stats()
