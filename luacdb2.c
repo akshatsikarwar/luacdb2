@@ -168,6 +168,17 @@ static int bind(Lua L)
     return 0;
 }
 
+static int column_name(Lua L)
+{
+    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
+    if (!cdb2->running) {
+        return luaL_error(L, "no active statement");
+    }
+    int col = luaL_checkinteger(L, 2) - 1;
+    lua_pushstring(L, cdb2_column_name(cdb2->db, col));
+    return 1;
+}
+
 static int column_value(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
@@ -291,6 +302,7 @@ static void init_cdb2(Lua L)
         {"__gc", __gc},
         {"async_stmt", async_stmt},
         {"bind", bind},
+        {"column_name", column_name},
         {"column_value", column_value},
         {"drain", drain},
         {"next_record", next_record},
