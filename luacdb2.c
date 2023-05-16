@@ -96,7 +96,7 @@ static int comdb2(Lua L)
 
 static int comdb2_set_config(Lua L)
 {
-    cdb2_set_comdb2db_info(lua_tostring(L, 1));
+    cdb2_set_comdb2db_info((char *)lua_tostring(L, 1));
     return 0;
 }
 
@@ -309,7 +309,7 @@ static void init_cdb2(Lua L)
 
 int main(int argc, char **argv)
 {
-    const char *config_file = getenv("CDB2_CONFIG");
+    char *config_file = getenv("CDB2_CONFIG");
     if (config_file) cdb2_set_comdb2db_config(config_file);
     signal(SIGPIPE, SIG_IGN);
     Lua L = luaL_newstate();
