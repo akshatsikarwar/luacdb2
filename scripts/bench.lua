@@ -107,14 +107,21 @@ function verify_err()
     end
 end
 
+function time_it(func, ...)
+    local start = os.time()
+    func(...)
+    local stop = os.time()
+    print("time: " .. os.difftime(stop, start))
+end
+
 function test()
-    thds = 8
+    thds = 10
     dbs = {}
     connect()
     truncate()
-    insert_from_all(50000)
+    time_it(insert_from_all, 100000)
     tbl_stats()
-    verify_err()
+    time_it(verify_err)
     tbl_stats()
     print("success")
 end
