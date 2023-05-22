@@ -333,7 +333,7 @@ int main(int argc, char **argv)
         lua_pushstring(L, argv[i]);
         lua_rawseti(L, -2, i - 1);
     }
-    lua_setglobal(L, "arg");
+    lua_setglobal(L, "argv");
     int rc = EXIT_SUCCESS;
     if (lua_pcall(L, 0, LUA_MULTRET, 0)) {
         fprintf(stderr, "%s\n", lua_tostring(L, -1));

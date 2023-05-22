@@ -3,8 +3,8 @@
 function connect()
     local dbname = "akdb"
     local tier = "local"
-    if #arg >= 1 then dbname = arg[1] end
-    if #arg >= 2 then tier = arg[2] end
+    if #argv >= 1 then dbname = argv[1] end
+    if #argv >= 2 then tier = argv[2] end
     for i = 1, thds do
         table.insert(dbs, comdb2(dbname, tier))
         db = dbs[#dbs]
