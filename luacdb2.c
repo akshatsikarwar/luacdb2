@@ -282,12 +282,20 @@ static int verify_err(Lua L)
     if (rc == 0) {
         while ((rc = cdb2_next_record(cdb2->db)) == CDB2_OK)
             ;
-        if (rc == CDB2_OK_DONE) return 0;
-        return luaL_error(L, cdb2_errstr(cdb2->db));
-    } else if (rc != CDB2ERR_VERIFY_ERROR) {
-        return luaL_error(L, cdb2_errstr(cdb2->db));
+        if (rc == CDB2_OK_DONE) {
+            lua_pushboolean(L, 1);
+            return 1;
+        }
     }
-    printf("%s rc:%d err:%s\n", __func__, rc, cdb2_errstr(cdb2->db));
+    fprintf(stderr, "%s rc:%d err:%s\n", __func__, rc, cdb2_errstr(cdb2->db));
+    cdb2->errstr = cdb2_errstr(cdb2->db);
+    cdb2->running = 0;
+    cdb2_close(cdb2->db);
+    cdb2_open(&cdb2->db, cdb2->dbname, cdb2->tier, 0);
+    if (rc == CDB2ERR_VERIFY_ERROR) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
     return 0;
 }
 
