@@ -17,6 +17,8 @@ typedef lua_State *Lua;
 struct cdb2_async;
 
 struct cdb2 {
+    char *dbname;
+    char *tier;
     int running;
     cdb2_hndl_tp *db;
     int n_params;
@@ -77,11 +79,11 @@ static int async_result(struct cdb2 *cdb2)
 static int comdb2(Lua L)
 {
     luaL_argcheck(L, lua_gettop(L) == 2, lua_gettop(L), "need: dbname tier");
-    const char *dbname, *tier;
-    if ((dbname = lua_tostring(L, 1)) == NULL) {
+    char *dbname, *tier;
+    if ((dbname = strdup(lua_tostring(L, 1))) == NULL) {
         return luaL_argerror(L, 1, "expected db-name");
     }
-    if ((tier = lua_tostring(L, 2)) == NULL) {
+    if ((tier = strdup(lua_tostring(L, 2))) == NULL) {
         return luaL_argerror(L, 2, "expected db-tier");
     }
     cdb2_hndl_tp *db = NULL;
@@ -90,6 +92,8 @@ static int comdb2(Lua L)
     }
     struct cdb2 *cdb2 = lua_newuserdata(L, sizeof(struct cdb2));
     memset(cdb2, 0, sizeof(struct cdb2));
+    cdb2->dbname = dbname;
+    cdb2->tier = tier;
     cdb2->db = db;
     luaL_getmetatable(L, "cdb2");
     lua_setmetatable(L, -2);
@@ -109,8 +113,11 @@ static int __gc(Lua L)
         fprintf(stderr,  "closing active statement\n");
     }
     if (cdb2->db) cdb2_close(cdb2->db);
+    free(cdb2->dbname);
+    free(cdb2->tier);
     return 0;
 }
+
 
 static int async_stmt(Lua L)
 {
