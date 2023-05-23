@@ -19,12 +19,12 @@ struct cdb2_async;
 struct cdb2 {
     char *dbname;
     char *tier;
+    char *errstr;
     int running;
     cdb2_hndl_tp *db;
     int n_params;
     void *params[32];
     struct cdb2_async *async;
-    const char *errstr;
 };
 
 struct cdb2_async {
@@ -116,6 +116,7 @@ static int __gc(Lua L)
     if (cdb2->db) cdb2_close(cdb2->db);
     free(cdb2->dbname);
     free(cdb2->tier);
+    free(cdb2->errstr);
     return 0;
 }
 
@@ -288,7 +289,8 @@ static int verify_err(Lua L)
         }
     }
     fprintf(stderr, "%s rc:%d err:%s\n", __func__, rc, cdb2_errstr(cdb2->db));
-    cdb2->errstr = cdb2_errstr(cdb2->db);
+    free(cdb2->errstr);
+    cdb2->errstr = strdup(cdb2_errstr(cdb2->db));
     cdb2->running = 0;
     cdb2_close(cdb2->db);
     cdb2_open(&cdb2->db, cdb2->dbname, cdb2->tier, 0);
