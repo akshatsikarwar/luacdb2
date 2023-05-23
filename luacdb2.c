@@ -9,6 +9,8 @@
 #include <cdb2api.h>
 
 #define MAX_PARAMS 32
+#define have_active_stmt "have active statement"
+#define no_active_stmt "no active statement"
 
 typedef lua_State *Lua;
 
@@ -104,7 +106,7 @@ static int __gc(Lua L)
 {
     struct cdb2 *cdb2 = lua_touserdata(L, -1);
     if (cdb2->running || cdb2->async) {
-        fprintf(stderr,  "closing active db handle\n");
+        fprintf(stderr,  "closing active statement\n");
     }
     if (cdb2->db) cdb2_close(cdb2->db);
     return 0;
@@ -114,7 +116,7 @@ static int async_stmt(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (cdb2->running || cdb2->async) {
-        return luaL_error(L, "statement already active");
+        return luaL_error(L, have_active_stmt);
     }
     const char *sql = luaL_checkstring(L, 2);
     cdb2->running = 1;
@@ -133,7 +135,7 @@ static int bind(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (cdb2->running || cdb2->async) {
-        return luaL_error(L, "statement already active");
+        return luaL_error(L, have_active_stmt);
     }
     luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index, value");
     int idx = lua_tointeger(L, 2);
@@ -172,7 +174,7 @@ static int column_name(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (!cdb2->running) {
-        return luaL_error(L, "no active statement");
+        return luaL_error(L, no_active_stmt);
     }
     int col = luaL_checkinteger(L, 2) - 1;
     lua_pushstring(L, cdb2_column_name(cdb2->db, col));
@@ -183,7 +185,7 @@ static int column_value(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (!cdb2->running) {
-        return luaL_error(L, "no active statement");
+        return luaL_error(L, no_active_stmt);
     }
     int column = luaL_checkinteger(L, 2) - 1;
     if (cdb2_column_value(cdb2->db, column) == NULL) {
@@ -202,7 +204,7 @@ static int column_value(Lua L)
 static int drain(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (!cdb2->running) return luaL_error(L, "no active statement");
+    if (!cdb2->running) return luaL_error(L, no_active_stmt);
     if (cdb2->async && async_result(cdb2)) return luaL_error(L, cdb2_errstr(cdb2->db));
     int rc;
     while ((rc = cdb2_next_record(cdb2->db)) == CDB2_OK)
@@ -215,7 +217,7 @@ static int drain(Lua L)
 static int next_record(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (!cdb2->running) return luaL_error(L, "no active statement");
+    if (!cdb2->running) return luaL_error(L, no_active_stmt);
     if (cdb2->async && async_result(cdb2)) return luaL_error(L, cdb2_errstr(cdb2->db));
     int rc = cdb2_next_record(cdb2->db);
     if (rc == CDB2_OK) {
@@ -233,7 +235,7 @@ static int num_columns(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (!cdb2->running) {
-        return luaL_error(L, "no active statement");
+        return luaL_error(L, no_active_stmt);
     }
     lua_pushinteger(L, cdb2_numcolumns(cdb2->db));
     return 1;
@@ -243,7 +245,7 @@ static int rd_stmt(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (cdb2->running || cdb2->async) {
-        return luaL_error(L, "statement already active");
+        return luaL_error(L, have_active_stmt);
     }
     const char *sql = luaL_checkstring(L, 2);
     if (cdb2_run_statement(cdb2->db, sql) != 0) {
@@ -257,7 +259,7 @@ static int rd_stmt(Lua L)
 static int verify_err(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (!cdb2->running) return luaL_error(L, "no active statement");
+    if (!cdb2->running) return luaL_error(L, no_active_stmt);
     if (!cdb2->async) return luaL_error(L, "no async statement");
     int rc = async_result(cdb2);
     cdb2->running = 0;
@@ -277,7 +279,7 @@ static int wr_stmt(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (cdb2->running || cdb2->async) {
-        return luaL_error(L, "statement already active");
+        return luaL_error(L, have_active_stmt);
     }
     const char *sql = luaL_checkstring(L, 2);
     if (cdb2_run_statement(cdb2->db, sql) != 0) {
