@@ -24,6 +24,7 @@ struct cdb2 {
     int n_params;
     void *params[32];
     struct cdb2_async *async;
+    const char *errstr;
 };
 
 struct cdb2_async {
@@ -221,6 +222,14 @@ static int drain(Lua L)
     return 0;
 }
 
+static int last_err(Lua L)
+{
+    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
+    if (cdb2->running || cdb2->async) return luaL_error(L, have_active_stmt);
+    lua_pushstring(L, cdb2->errstr);
+    return 1;
+}
+
 static int next_record(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
@@ -314,6 +323,7 @@ static void init_cdb2(Lua L)
         {"column_name", column_name},
         {"column_value", column_value},
         {"drain", drain},
+        {"last_err", last_err},
         {"next_record", next_record},
         {"num_columns", num_columns},
         {"rd_stmt", rd_stmt},
