@@ -4,16 +4,18 @@ function args()
     dbname = "akdb"
     tier = "local"
     tbl = "t"
-    thds = 8
+    thds = 10 
+    rows = 100000
     if #argv >= 1 and (argv[1] == "--help" or argv[1] == "-h") then
-        print("Usage: bench.lua [dbname] [tier] [tbl] [thds]")
+        print("Usage: bench.lua [dbname] [tier] [tbl] [thds] [rows]")
         os.exit(0)
     end
     if #argv >= 1 then dbname = argv[1] end
     if #argv >= 2 then tier = argv[2] end
     if #argv >= 3 then tbl = argv[3] end
     if #argv >= 4 then thds = tonumber(argv[4]) end
-    print(string.format("db:%s tier:%s tbl:%s thds:%d\n", dbname, tier, tbl, thds))
+    if #argv >= 5 then rows = tonumber(argv[5]) end
+    print(string.format("db:%s  tier:%s  tbl:%s  thds:%d  rows/thd:%d  total-rows:%d", dbname, tier, tbl, thds, rows, thds * rows))
 end
 
 function connect()
@@ -42,11 +44,11 @@ function tbl_stats()
     db:drain()
 end
 
-function insert(total)
+function insert()
     for i = 1, thds do
         dbs[i]:wr_stmt("SET TRANSACTION CHUNK 10000")
         dbs[i]:wr_stmt("BEGIN")
-        ins = string.format("INSERT INTO %s SELECT value, randomblob(1024), 'hello, world!' FROM generate_series(1, %d)", tbl, total)
+        ins = string.format("INSERT INTO %s SELECT value, randomblob(1024), 'hello, world!' FROM generate_series(1, %d)", tbl, rows)
         if i == 1 then
             print(ins .. ' X ' .. thds)
         end
@@ -82,7 +84,7 @@ function process_dels(dels)
     return failed
 end
 
-function verify_err(rows)
+function verify_err()
     local dels = {}
     for i = 1, rows / 5000  do
         table.insert(dels, string.format("DELETE FROM %s WHERE i >= %d LIMIT 5000", tbl, (i - 1) * 5000))
@@ -114,11 +116,9 @@ function test()
     db:wr_stmt(string.format("DROP TABLE IF EXISTS %s", tbl))
     db:wr_stmt(string.format("CREATE TABLE IF NOT EXISTS %s(i INTEGER INDEX, b BLOB, s CSTRING(64))", tbl))
 
-    local rows = 10000
-    --total_rows = rows * thds
-    time_it(insert, rows)
+    time_it(insert)
     tbl_stats()
-    time_it(verify_err, rows)
+    time_it(verify_err)
     tbl_stats()
     print("success")
 end
