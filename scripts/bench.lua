@@ -21,102 +21,74 @@ function connect()
     for i = 1, thds do
         table.insert(dbs, comdb2(dbname, tier))
         db = dbs[#dbs]
-        db:rd_stmt("select comdb2_dbname(), comdb2_host(), comdb2_semver()")
+        db:rd_stmt("SELECT comdb2_dbname(), comdb2_host(), comdb2_semver()")
         print(string.format("thd:%2d   dbname:%s/%s   host:%s   version:%s", i, db:column_value(1), tier, db:column_value(2), db:column_value(3)))
         db:drain()
     end
 end
 
-function truncate()
-    print('truncate')
-    db:wr_stmt("drop table if exists t")
-    db:wr_stmt("create table if not exists t(i integer index)")
-end
 
 function tbl_stats()
-    db:wr_stmt("put tunable parallel_count 1")
-    db:rd_stmt("select count(*) from t")
+    db:wr_stmt("PUT TUNABLE parallel_count 1")
+    db:rd_stmt(string.format("SELECT count(*) FROM %s", tbl))
     print("total rows:" .. db:column_value(1))
     db:drain()
-    db:rd_stmt("select min(i), max(i), count(i) from t")
-    print("min:".. db:column_value(1) .. " max:"..  db:column_value(2))
+    db:rd_stmt(string.format("SELECT min(i), max(i) FROM %s", tbl))
+    local min = db:column_value(1)
+    local max = db:column_value(2)
+    if min == nil then min = 'nil' end
+    if max == nil then max = 'nil' end
+    print("min:" .. min .. " max:" .. max)
     db:drain()
 end
 
 function insert(total)
-    print('insert')
-    if total < thds then error("not enough data to insert") end
-
-    if total < 100000 then
-        db:wr_stmt("set transaction chunk 10000")
-        db:wr_stmt("begin")
-        db:wr_stmt(string.format("insert into t(i) select value from generate_series(1, %d)", total))
-        db:wr_stmt("commit")
-        --for i = 1, total, 10000 do
-        --    local ins = string.format("insert into t(i) select value from generate_series(%d, %d)", i, i + 10000 - 1)
-        --    print(ins)
-        --    db:wr_stmt(ins)
-        --end
-        return
-    end
-
-    if math.fmod(total, thds) ~= 0 then error("need count divisible by " .. thds) end
     for i = 1, thds do
-        dbs[i]:wr_stmt("set transaction chunk " .. 10000)
-        dbs[i]:wr_stmt("begin")
-    end
-
-    local from = 1
-    local per_thd = total / thds
-    for i = 1, thds do
-        to = from + per_thd - 1;
-        --print("thd:"..i.." from:"..from.." to:"..to)
-        dbs[i]:bind(1, from)
-        dbs[i]:bind(2, from + per_thd - 1)
-        dbs[i]:async_stmt("insert into t(i) select value from generate_series(?, ?)")
-        from = to + 1
-    end
-    for i = 1, thds do
-        dbs[i]:drain()
-    end
-
-    for i = 1, thds do
-        dbs[i]:async_stmt("commit")
-    end
-    for i = 1, thds do
-        dbs[i]:drain()
-    end
-end
-
-function insert_from_all(total)
-    for i = 1, thds do
-        dbs[i]:wr_stmt("set transaction chunk 1000")
-        dbs[i]:wr_stmt("begin")
-        ins = string.format("insert into t(i) select value from generate_series(1, %d)", total)
-        print(ins)
+        dbs[i]:wr_stmt("SET TRANSACTION CHUNK 10000")
+        dbs[i]:wr_stmt("BEGIN")
+        ins = string.format("INSERT INTO %s SELECT value, randomblob(1024), 'hello, world!' FROM generate_series(1, %d)", tbl, total)
+        if i == 1 then
+            print(ins .. ' X ' .. thds)
+        end
         dbs[i]:async_stmt(ins)
     end
     for i = 1, thds do
         dbs[i]:drain()
-    end
-    for i = 1, thds do
-        dbs[i]:async_stmt("commit")
-    end
-    for i = 1, thds do
-        dbs[i]:drain()
+        dbs[i]:wr_stmt("COMMIT")
     end
 end
 
-function verify_err()
-    for i = 1, 10 do
-        del=string.format("delete from t where i >= %d limit 5000", (i - 1) * 5000)
-        for j = 1, thds do
-            print(del)
-            dbs[j]:async_stmt(del)
+function process_dels(dels)
+    local failed = {}
+    for _, del in ipairs(dels) do
+        print(del .. ' X ' .. thds)
+        for i = 1, thds do
+            dbs[i]:async_stmt(del)
         end
-        for j = 1, thds do
-            dbs[j]:verify_err()
+        local fail = 0
+        for i = 1, thds do
+            local rc = dbs[i]:verify_err()
+            if not rc then
+                fail = fail + 1
+            end
+            if rc == nil then -- something other than verify_err
+                print(dbs[i]:last_err())
+            end
         end
+        if fail > 0 then
+            table.insert(failed, del)
+        end
+    end
+    return failed
+end
+
+function verify_err(rows)
+    local dels = {}
+    for i = 1, rows / 5000  do
+        table.insert(dels, string.format("DELETE FROM %s WHERE i >= %d LIMIT 5000", tbl, (i - 1) * 5000))
+    end
+    while #dels > 0 do -- keep running until nothing fails
+        dels = process_dels(dels)
     end
 end
 
@@ -127,13 +99,26 @@ function time_it(func, ...)
     print("time: " .. os.difftime(stop, start))
 end
 
+function tunable_stats()
+    db:rd_stmt("SELECT name, value FROM comdb2_tunables WHERE name IN ('dtastripe', 'reorder_socksql_no_deadlock','reorder_idx_writes')")
+    while db:next_record() do
+        print(db:column_value(1), db:column_value(2))
+    end
+end
+
 function test()
     args()
     connect()
-    truncate()
-    time_it(insert_from_all, 100000)
+    tunable_stats()
+
+    db:wr_stmt(string.format("DROP TABLE IF EXISTS %s", tbl))
+    db:wr_stmt(string.format("CREATE TABLE IF NOT EXISTS %s(i INTEGER INDEX, b BLOB, s CSTRING(64))", tbl))
+
+    local rows = 10000
+    --total_rows = rows * thds
+    time_it(insert, rows)
     tbl_stats()
-    time_it(verify_err)
+    time_it(verify_err, rows)
     tbl_stats()
     print("success")
 end
