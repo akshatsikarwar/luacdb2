@@ -1,10 +1,23 @@
 #!/home/asikarw1/src/luacdb2/build/luacdb2
 
-function connect()
-    local dbname = "akdb"
-    local tier = "local"
+function args()
+    dbname = "akdb"
+    tier = "local"
+    tbl = "t"
+    thds = 8
+    if #argv >= 1 and (argv[1] == "--help" or argv[1] == "-h") then
+        print("Usage: bench.lua [dbname] [tier] [tbl] [thds]")
+        os.exit(0)
+    end
     if #argv >= 1 then dbname = argv[1] end
     if #argv >= 2 then tier = argv[2] end
+    if #argv >= 3 then tbl = argv[3] end
+    if #argv >= 4 then thds = tonumber(argv[4]) end
+    print(string.format("db:%s tier:%s tbl:%s thds:%d\n", dbname, tier, tbl, thds))
+end
+
+function connect()
+    dbs = {}
     for i = 1, thds do
         table.insert(dbs, comdb2(dbname, tier))
         db = dbs[#dbs]
@@ -115,8 +128,7 @@ function time_it(func, ...)
 end
 
 function test()
-    thds = 10
-    dbs = {}
+    args()
     connect()
     truncate()
     time_it(insert_from_all, 100000)
