@@ -1,6 +1,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -317,6 +318,49 @@ static int wr_stmt(Lua L)
     return 0;
 }
 
+static void get_timeval(Lua L, int idx, struct timeval *t)
+{
+    luaL_checktype(L, idx, LUA_TTABLE);
+
+    lua_pushstring(L, "sec");
+    lua_gettable(L, idx);
+    t->tv_sec = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+
+    lua_pushstring(L, "usec");
+    lua_gettable(L, idx);
+    t->tv_usec = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+}
+
+static void push_timeval(Lua L, struct timeval *t)
+{
+    lua_newtable(L);
+    lua_pushstring(L, "sec");
+    lua_pushnumber(L, t->tv_sec);
+    lua_settable(L, -3);
+    lua_pushstring(L, "usec");
+    lua_pushnumber(L, t->tv_usec);
+    lua_settable(L, -3);
+}
+
+static int luacdb2_gettimeofday(Lua L)
+{
+    struct timeval t;
+    gettimeofday(&t, NULL);
+    push_timeval(L, &t);
+    return 1;
+}
+
+static int luacdb2_timersub(Lua L)
+{
+    struct timeval start, end, diff;
+    get_timeval(L, 1, &end);
+    get_timeval(L, 2, &start);
+    timersub(&end, &start, &diff);
+    push_timeval(L, &diff);
+    return 1;
+}
 
 static void init_cdb2(Lua L)
 {
@@ -325,6 +369,12 @@ static void init_cdb2(Lua L)
 
     lua_pushcfunction(L, comdb2_set_config);
     lua_setglobal(L, "comdb2_set_config");
+
+    lua_pushcfunction(L, luacdb2_gettimeofday);
+    lua_setglobal(L, "gettimeofday");
+
+    lua_pushcfunction(L, luacdb2_timersub);
+    lua_setglobal(L, "timersub");
 
     const struct luaL_Reg cdb2_funcs[] = {
         {"__gc", __gc},
