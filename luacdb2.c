@@ -102,7 +102,7 @@ static int comdb2(Lua L)
     return 1;
 }
 
-static int comdb2_set_config(Lua L)
+static int comdb2db_info(Lua L)
 {
     cdb2_set_comdb2db_info((char *)lua_tostring(L, 1));
     return 0;
@@ -362,13 +362,22 @@ static int luacdb2_timersub(Lua L)
     return 1;
 }
 
+static int disable_sockpool(Lua L)
+{
+    cdb2_disable_sockpool();
+    return 0;
+}
+
 static void init_cdb2(Lua L)
 {
     lua_pushcfunction(L, comdb2);
     lua_setglobal(L, "comdb2");
 
-    lua_pushcfunction(L, comdb2_set_config);
-    lua_setglobal(L, "comdb2_set_config");
+    lua_pushcfunction(L, comdb2db_info);
+    lua_setglobal(L, "comdb2db_info");
+
+    lua_pushcfunction(L, disable_sockpool);
+    lua_setglobal(L, "disable_sockpool");
 
     lua_pushcfunction(L, luacdb2_gettimeofday);
     lua_setglobal(L, "gettimeofday");
