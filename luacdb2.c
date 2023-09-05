@@ -81,6 +81,7 @@ static int async_result(struct cdb2 *cdb2)
 static int comdb2(Lua L)
 {
     luaL_argcheck(L, lua_gettop(L) == 2, lua_gettop(L), "need: dbname tier");
+    int flags = 0;
     char *dbname, *tier;
     if ((dbname = strdup(lua_tostring(L, 1))) == NULL) {
         return luaL_argerror(L, 1, "expected db-name");
@@ -88,8 +89,14 @@ static int comdb2(Lua L)
     if ((tier = strdup(lua_tostring(L, 2))) == NULL) {
         return luaL_argerror(L, 2, "expected db-tier");
     }
+    if (tier[0] == '@') {
+        char *tmp = strdup(tier + 1);
+        free(tier);
+        tier = tmp;
+        flags |= CDB2_DIRECT_CPU;
+    }
     cdb2_hndl_tp *db = NULL;
-    if (cdb2_open(&db, dbname, tier, 0) != 0 || !db) {
+    if (cdb2_open(&db, dbname, tier, flags) != 0 || !db) {
         return luaL_error(L, cdb2_errstr(db));
     }
     struct cdb2 *cdb2 = lua_newuserdata(L, sizeof(struct cdb2));
