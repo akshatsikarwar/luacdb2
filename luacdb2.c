@@ -181,6 +181,12 @@ static int bind(Lua L)
             }
         }
         break;
+    case LUA_TNIL: {
+            if (cdb2_bind_index(cdb2->db, idx, CDB2_CSTRING, NULL, 0) != 0) {
+                return luaL_error(L, cdb2_errstr(cdb2->db));
+            }
+        }
+        break;
     default:
         return luaL_error(L, "unsupported parameter type");
     }
