@@ -118,7 +118,10 @@ static int comdb2db_info(Lua L)
 static int __gc(Lua L)
 {
     struct cdb2 *cdb2 = lua_touserdata(L, -1);
-    if (cdb2->running || cdb2->async) {
+    if (cdb2->async) {
+        fprintf(stderr,  "waiting for async statement completion\n");
+        async_result(cdb2);
+    } else if (cdb2->running) {
         fprintf(stderr,  "closing active statement\n");
     }
     if (cdb2->db) cdb2_close(cdb2->db);
@@ -127,7 +130,6 @@ static int __gc(Lua L)
     free(cdb2->errstr);
     return 0;
 }
-
 
 static int async_stmt(Lua L)
 {
@@ -146,7 +148,6 @@ static int async_stmt(Lua L)
     }
     return 0;
 }
-
 
 static int bind(Lua L)
 {
