@@ -233,7 +233,7 @@ static int drain(Lua L)
     int rc;
     while ((rc = cdb2_next_record(cdb2->db)) == CDB2_OK)
         ;
-    if (rc != CDB2_OK_DONE) return luaL_error(L, cdb2_errstr(cdb2->db));
+    if (rc != CDB2_OK_DONE) return luaL_error(L, "rc:%d err:%s", rc, cdb2_errstr(cdb2->db));
     cdb2->running = 0;
     return 0;
 }
@@ -288,7 +288,7 @@ static int rd_stmt(Lua L)
     return 0;
 }
 
-static int verify_err(Lua L)
+static int expect_err(Lua L, int expected)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (!cdb2->running) return luaL_error(L, no_active_stmt);
@@ -299,21 +299,30 @@ static int verify_err(Lua L)
         while ((rc = cdb2_next_record(cdb2->db)) == CDB2_OK)
             ;
         if (rc == CDB2_OK_DONE) {
-            lua_pushboolean(L, 1);
+            lua_pushboolean(L, 0);
             return 1;
         }
     }
-    fprintf(stderr, "%s rc:%d err:%s\n", __func__, rc, cdb2_errstr(cdb2->db));
+    if (rc != expected) {
+        return luaL_error(L, "rc:%d err:%s", rc, cdb2_errstr(cdb2->db));
+    }
     free(cdb2->errstr);
     cdb2->errstr = strdup(cdb2_errstr(cdb2->db));
     cdb2->running = 0;
     cdb2_close(cdb2->db);
     cdb2_open(&cdb2->db, cdb2->dbname, cdb2->tier, 0);
-    if (rc == CDB2ERR_VERIFY_ERROR) {
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-    return 0;
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+static int verify_err(Lua L)
+{
+    return expect_err(L, CDB2ERR_VERIFY_ERROR);
+}
+
+static int querylimit_err(Lua L)
+{
+    return expect_err(L, CDB2ERR_QUERYLIMIT);
 }
 
 static int wr_stmt(Lua L)
@@ -409,6 +418,7 @@ static void init_cdb2(Lua L)
         {"last_err", last_err},
         {"next_record", next_record},
         {"num_columns", num_columns},
+        {"querylimit_err", querylimit_err},
         {"rd_stmt", rd_stmt},
         {"verify_err", verify_err},
         {"wr_stmt", wr_stmt},

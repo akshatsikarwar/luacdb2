@@ -69,12 +69,8 @@ function process_dels(dels)
         end
         local fail = 0
         for i = 1, thds do
-            local rc = dbs[i]:verify_err()
-            if not rc then
+            if dbs[i]:verify_err() then
                 fail = fail + 1
-            end
-            if rc == nil then -- something other than verify_err
-                print(dbs[i]:last_err())
             end
         end
         if fail > 0 then
