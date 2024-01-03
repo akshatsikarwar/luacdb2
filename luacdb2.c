@@ -375,6 +375,16 @@ static int luacdb2_gettimeofday(Lua L)
     return 1;
 }
 
+static int luacdb2_timeradd(Lua L)
+{
+    struct timeval first, second, sum;
+    get_timeval(L, 1, &first);
+    get_timeval(L, 2, &second);
+    timeradd(&first, &second, &sum);
+    push_timeval(L, &sum);
+    return 1;
+}
+
 static int luacdb2_timersub(Lua L)
 {
     struct timeval start, end, diff;
@@ -404,6 +414,9 @@ static void init_cdb2(Lua L)
 
     lua_pushcfunction(L, luacdb2_gettimeofday);
     lua_setglobal(L, "gettimeofday");
+
+    lua_pushcfunction(L, luacdb2_timeradd);
+    lua_setglobal(L, "timeradd");
 
     lua_pushcfunction(L, luacdb2_timersub);
     lua_setglobal(L, "timersub");
