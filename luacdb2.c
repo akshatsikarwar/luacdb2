@@ -304,14 +304,14 @@ static int expect_err(Lua L, int expected)
         }
     }
     if (rc != expected) {
-        return luaL_error(L, "rc:%d err:%s", rc, cdb2_errstr(cdb2->db));
+        return luaL_error(L, "expected:%d rc:%d err:%s", expected, rc, cdb2_errstr(cdb2->db));
     }
     free(cdb2->errstr);
     cdb2->errstr = strdup(cdb2_errstr(cdb2->db));
     cdb2->running = 0;
     cdb2_close(cdb2->db);
     cdb2_open(&cdb2->db, cdb2->dbname, cdb2->tier, 0);
-    lua_pushboolean(L, 0);
+    lua_pushboolean(L, 1);
     return 1;
 }
 
