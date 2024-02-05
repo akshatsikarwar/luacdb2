@@ -2,6 +2,7 @@
 #include <signal.h>
 #include <string.h>
 #include <sys/time.h>
+#include <unistd.h>
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -112,6 +113,12 @@ static int comdb2(Lua L)
 static int comdb2db_info(Lua L)
 {
     cdb2_set_comdb2db_info((char *)lua_tostring(L, 1));
+    return 0;
+}
+
+static int disable_sockpool(Lua L)
+{
+    cdb2_disable_sockpool();
     return 0;
 }
 
@@ -395,9 +402,10 @@ static int luacdb2_timersub(Lua L)
     return 1;
 }
 
-static int disable_sockpool(Lua L)
+static int luacdb2_sleep(Lua L)
 {
-    cdb2_disable_sockpool();
+    int sec = luaL_checkinteger(L, 1);
+    sleep(sec);
     return 0;
 }
 
@@ -420,6 +428,9 @@ static void init_cdb2(Lua L)
 
     lua_pushcfunction(L, luacdb2_timersub);
     lua_setglobal(L, "timersub");
+
+    lua_pushcfunction(L, luacdb2_sleep);
+    lua_setglobal(L, "sleep");
 
     const struct luaL_Reg cdb2_funcs[] = {
         {"__gc", __gc},
