@@ -280,7 +280,7 @@ static int num_columns(Lua L)
     return 1;
 }
 
-static int rd_stmt(Lua L)
+static int rd_stmt_int(Lua L, int fail)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (cdb2->running || cdb2->async) {
@@ -288,11 +288,24 @@ static int rd_stmt(Lua L)
     }
     const char *sql = luaL_checkstring(L, 2);
     if (cdb2_run_statement(cdb2->db, sql) != 0) {
-        return luaL_error(L, cdb2_errstr(cdb2->db));
+        if (fail) return luaL_error(L, cdb2_errstr(cdb2->db));
+        fprintf(stderr, "%s\n", cdb2_errstr(cdb2->db));
+        lua_pushboolean(L, 0);
+        return 1;
     }
     clear_params(cdb2);
     cdb2->running = 1;
-    return 0;
+    if (fail) return 0;
+    lua_pushboolean(L, 1);
+    return 1;
+}
+static int rd_stmt(Lua L)
+{
+    return rd_stmt_int(L, 1);
+}
+static int try_rd_stmt(Lua L)
+{
+    return rd_stmt_int(L, 0);
 }
 
 static int expect_err(Lua L, int expected)
@@ -444,6 +457,7 @@ static void init_cdb2(Lua L)
         {"num_columns", num_columns},
         {"querylimit_err", querylimit_err},
         {"rd_stmt", rd_stmt},
+        {"try_rd_stmt", try_rd_stmt},
         {"verify_err", verify_err},
         {"wr_stmt", wr_stmt},
         {NULL, NULL}
