@@ -81,14 +81,18 @@ static int async_result(struct cdb2 *cdb2)
 
 static int comdb2(Lua L)
 {
-    luaL_argcheck(L, lua_gettop(L) == 2, lua_gettop(L), "need: dbname tier");
+    int args = lua_gettop(L);
+    luaL_argcheck(L, args < 2 || args > 2, lua_gettop(L), "need: dbname tier");
     int flags = 0;
-    char *dbname, *tier;
+    char *dbname;
     if ((dbname = strdup(lua_tostring(L, 1))) == NULL) {
         return luaL_argerror(L, 1, "expected db-name");
     }
-    if ((tier = strdup(lua_tostring(L, 2))) == NULL) {
-        return luaL_argerror(L, 2, "expected db-tier");
+    char *tier;
+    if (args == 2) {
+        tier = strdup(lua_tostring(L, 2));
+    } else {
+        tier = strdup("default");
     }
     if (tier[0] == '@') {
         if (strchr(tier, ',') == NULL) {
