@@ -91,10 +91,12 @@ static int comdb2(Lua L)
         return luaL_argerror(L, 2, "expected db-tier");
     }
     if (tier[0] == '@') {
-        char *tmp = strdup(tier + 1);
-        free(tier);
-        tier = tmp;
-        flags |= CDB2_DIRECT_CPU;
+        if (strchr(tier, ',') == NULL) {
+            flags |= CDB2_DIRECT_CPU;
+            char *tmp = strdup(tier + 1);
+            free(tier);
+            tier = tmp;
+        }
     }
     cdb2_hndl_tp *db = NULL;
     if (cdb2_open(&db, dbname, tier, flags) != 0 || !db) {
