@@ -6,7 +6,6 @@ add_executable(luacdb2 luacdb2.c)
 
 find_package(ConfigureBbTarget QUIET)
 if (ConfigureBbTarget_FOUND)
-    target_compile_definitions(luacdb2 PRIVATE CDB2ERR_QUERYLIMIT=-107) #until open-cdb2api merges with bb-cdb2api
     set_target_properties(luacdb2 PROPERTIES LINKER_LANGUAGE CXX)
     target_link_libraries(luacdb2 PRIVATE lua5.3 cdb2api)
     configure_bb_target(luacdb2 V2)

@@ -130,10 +130,22 @@ static int __gc(Lua L)
     } else if (cdb2->running) {
         fprintf(stderr,  "closing active statement\n");
     }
-    if (cdb2->db) cdb2_close(cdb2->db);
-    free(cdb2->dbname);
-    free(cdb2->tier);
-    free(cdb2->errstr);
+    if (cdb2->db) {
+        cdb2_close(cdb2->db);
+        cdb2->db = NULL;
+    }
+    if (cdb2->dbname) {
+        free(cdb2->dbname);
+        cdb2->dbname = NULL;
+    }
+    if (cdb2->tier) {
+        free(cdb2->tier);
+        cdb2->tier = NULL;
+    }
+    if (cdb2->errstr) {
+        free(cdb2->errstr);
+        cdb2->errstr = NULL;
+    }
     return 0;
 }
 
@@ -155,7 +167,7 @@ static int async_stmt(Lua L)
     return 0;
 }
 
-static int bind(Lua L)
+static int comdb2_bind(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (cdb2->running || cdb2->async) {
@@ -447,7 +459,8 @@ static void init_cdb2(Lua L)
     const struct luaL_Reg cdb2_funcs[] = {
         {"__gc", __gc},
         {"async_stmt", async_stmt},
-        {"bind", bind},
+        {"bind", comdb2_bind},
+        {"close", __gc},
         {"column_name", column_name},
         {"column_value", column_value},
         {"drain", drain},
