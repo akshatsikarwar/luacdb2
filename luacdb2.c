@@ -1,5 +1,7 @@
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -433,6 +435,21 @@ static int luacdb2_sleep(Lua L)
     return 0;
 }
 
+static int luacdb2_sleepms(Lua L)
+{
+    int ms = luaL_checkinteger(L, 1);
+    poll(NULL, 0, ms);
+    return 0;
+}
+
+static int luacdb2_setenv(Lua L)
+{
+    const char *key = luaL_checkstring(L, 1);
+    const char *val = luaL_checkstring(L, 2);
+    setenv(key, val, 1);
+    return 0;
+}
+
 static void init_cdb2(Lua L)
 {
     lua_pushcfunction(L, comdb2);
@@ -455,6 +472,12 @@ static void init_cdb2(Lua L)
 
     lua_pushcfunction(L, luacdb2_sleep);
     lua_setglobal(L, "sleep");
+
+    lua_pushcfunction(L, luacdb2_sleepms);
+    lua_setglobal(L, "sleepms");
+
+    lua_pushcfunction(L, luacdb2_setenv);
+    lua_setglobal(L, "setenv");
 
     const struct luaL_Reg cdb2_funcs[] = {
         {"__gc", __gc},
