@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 #include <lauxlib.h>
@@ -214,6 +215,46 @@ static int comdb2_bind(Lua L)
     return 0;
 }
 
+struct iovec hex_to_binary(Lua L, const char *str)
+{
+    size_t len = strlen(str);
+    if (len % 2) luaL_error(L, "comdb2_bind_blob: bad hex string");
+    struct iovec v;
+    v.iov_base = malloc(len / 2);
+    v.iov_len = len / 2;
+    uint8_t *b = v.iov_base;
+    uint8_t invalid = 'Z';
+    uint8_t map[255] = { invalid };
+    for (int i = '0'; i <= '9'; ++i) map[i] = i - '0';
+    for (int i = 'A'; i <= 'F'; ++i) map[i] = i - 'A' + 10;
+    for (int i = 'a'; i <= 'f'; ++i) map[i] = i - 'a' + 10;
+    for (int i = 0; i < len; ++b) {
+        uint8_t  first = map[str[i++]];
+        uint8_t second = map[str[i++]];
+        if (first == invalid || second == invalid) luaL_error(L, "comdb2_bind_blob: bad hex string");
+        *b = (first << 4) | second;
+    }
+    return v;
+}
+
+static int comdb2_bind_blob(Lua L)
+{
+    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
+    if (cdb2->running || cdb2->async) {
+        return luaL_error(L, have_active_stmt);
+    }
+    luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index, value");
+    int idx = lua_tointeger(L, 2);
+    if (cdb2->params[idx]) return luaL_error(L, "parameter already bound");
+    if (idx > cdb2->n_params) cdb2->n_params = idx;
+    struct iovec blob = hex_to_binary(L, luaL_checkstring(L, 3));
+    cdb2->params[idx] = blob.iov_base;
+    if (cdb2_bind_index(cdb2->db, idx, CDB2_BLOB, blob.iov_base, blob.iov_len) != 0) {
+        return luaL_error(L, cdb2_errstr(cdb2->db));
+    }
+    return 0;
+}
+
 static int column_name(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
@@ -223,6 +264,23 @@ static int column_name(Lua L)
     int col = luaL_checkinteger(L, 2) - 1;
     lua_pushstring(L, cdb2_column_name(cdb2->db, col));
     return 1;
+}
+
+void binary_to_hex(Lua L, void *ptr, size_t len)
+{
+    char *hex, *h;
+    hex = h = alloca(len * 2 + 3 + 1);
+    *h++ = 'x';
+    *h++ = '\'';
+    char map[]={'0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'};
+    for (int i = 0; i < len; ++i) {
+        uint8_t byte = *((uint8_t *)ptr + i);
+        *h++ = map[(byte & 0xf0) >> 4];
+        *h++ = map[byte & 0x0f];
+    }
+    *h++ = '\'';
+    *h++ = 0;
+    lua_pushstring(L, hex);
 }
 
 static int column_value(Lua L)
@@ -240,6 +298,7 @@ static int column_value(Lua L)
     case CDB2_CSTRING: lua_pushstring(L, cdb2_column_value(cdb2->db, column)); break;
     case CDB2_INTEGER: lua_pushinteger(L, *(int64_t *)cdb2_column_value(cdb2->db, column)); break;
     case CDB2_REAL: lua_pushnumber(L, *(double *)cdb2_column_value(cdb2->db, column)); break;
+    case CDB2_BLOB: binary_to_hex(L, cdb2_column_value(cdb2->db, column), cdb2_column_size(cdb2->db, column)); break;
     default: return luaL_error(L, "unsupported column type");
     }
     return 1;
@@ -278,7 +337,10 @@ static int next_record(Lua L)
         cdb2->running = 0;
         lua_pushboolean(L, 0);
     } else {
-        return luaL_error(L, cdb2_errstr(cdb2->db));
+        cdb2->running = 0;
+        fprintf(stderr, "%s\n", cdb2_errstr(cdb2->db));
+        lua_pushstring(L, cdb2_errstr(cdb2->db));
+        //return luaL_error(L, cdb2_errstr(cdb2->db));
     }
     return 1;
 }
@@ -438,7 +500,7 @@ static int luacdb2_sleep(Lua L)
 static int luacdb2_sleepms(Lua L)
 {
     int ms = luaL_checkinteger(L, 1);
-    poll(NULL, 0, ms);
+    if (ms) poll(NULL, 0, ms);
     return 0;
 }
 
@@ -483,6 +545,7 @@ static void init_cdb2(Lua L)
         {"__gc", __gc},
         {"async_stmt", async_stmt},
         {"bind", comdb2_bind},
+        {"bind_blob", comdb2_bind_blob},
         {"close", __gc},
         {"column_name", column_name},
         {"column_value", column_value},

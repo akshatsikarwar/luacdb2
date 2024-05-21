@@ -2,7 +2,9 @@ cmake_minimum_required(VERSION 3.16)
 project(luacdb2)
 set(CMAKE_BUILD_TYPE RelWithDebInfo)
 
-add_executable(luacdb2 luacdb2.c)
+add_definitions(-D_LINUX_SOURCE)
+include_directories(${PROJECT_SOURCE_DIR}) # /bb/mbig/mbig3082/git/githubbb/cdb2api/main/cdb2api)
+add_executable(luacdb2 luacdb2.c) # cdb2api.c comdb2buf.c)
 
 find_package(ConfigureBbTarget QUIET)
 if (ConfigureBbTarget_FOUND)
