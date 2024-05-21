@@ -28,7 +28,8 @@ struct cdb2 {
     int running;
     cdb2_hndl_tp *db;
     int n_params;
-    void *params[32];
+    void *param_value[32];
+    void *param_name[32];
     struct cdb2_async *async;
 };
 
@@ -44,8 +45,8 @@ struct cdb2_async {
 static void clear_params(struct cdb2 *cdb2)
 {
     for (int i = 1; i <= cdb2->n_params; ++i) {
-        free(cdb2->params[i]);
-        cdb2->params[i] = NULL;
+        free(cdb2->param_value[i]);
+        cdb2->param_value[i] = NULL;
     }
     cdb2->n_params = 0;
     cdb2_clearbindings(cdb2->db);
@@ -170,26 +171,25 @@ static int async_stmt(Lua L)
     return 0;
 }
 
-static int comdb2_bind(Lua L)
+static int bind_index(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (cdb2->running || cdb2->async) {
         return luaL_error(L, have_active_stmt);
     }
-    luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index, value");
     int idx = lua_tointeger(L, 2);
-    if (cdb2->params[idx]) return luaL_error(L, "parameter already bound");
+    if (cdb2->param_value[idx]) return luaL_error(L, "parameter already bound");
     if (idx > cdb2->n_params) cdb2->n_params = idx;
     switch (lua_type(L, -1)) {
     case LUA_TNUMBER:
         if (lua_isinteger(L, -1)) {
-            int64_t *val = cdb2->params[idx] = malloc(sizeof(int64_t));
+            int64_t *val = cdb2->param_value[idx] = malloc(sizeof(int64_t));
             *val = lua_tointeger(L, -1);
             if (cdb2_bind_index(cdb2->db, idx, CDB2_INTEGER, val, sizeof(*val)) != 0) {
                 return luaL_error(L, cdb2_errstr(cdb2->db));
             }
         } else if (lua_isnumber(L, -1)) {
-            double *val = cdb2->params[idx] = malloc(sizeof(double));
+            double *val = cdb2->param_value[idx] = malloc(sizeof(double));
             *val = lua_tonumber(L, -1);
             if (cdb2_bind_index(cdb2->db, idx, CDB2_REAL, val, sizeof(*val)) != 0) {
                 return luaL_error(L, cdb2_errstr(cdb2->db));
@@ -197,7 +197,7 @@ static int comdb2_bind(Lua L)
         }
         break;
     case LUA_TSTRING: {
-            char *val = cdb2->params[idx] = strdup(lua_tostring(L, -1));
+            char *val = cdb2->param_value[idx] = strdup(lua_tostring(L, -1));
             if (cdb2_bind_index(cdb2->db, idx, CDB2_CSTRING, val, strlen(val)) != 0) {
                 return luaL_error(L, cdb2_errstr(cdb2->db));
             }
@@ -213,6 +213,56 @@ static int comdb2_bind(Lua L)
         return luaL_error(L, "unsupported parameter type");
     }
     return 0;
+}
+
+static int bind_param(Lua L)
+{
+    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
+    if (cdb2->running || cdb2->async) {
+        return luaL_error(L, have_active_stmt);
+    }
+    int idx = cdb2->n_params++;
+    char *param = cdb2->param_name[idx] = strdup(lua_tostring(L, 2));
+    switch (lua_type(L, -1)) {
+    case LUA_TNUMBER:
+        if (lua_isinteger(L, -1)) {
+            int64_t *val = cdb2->param_value[idx] = malloc(sizeof(int64_t));
+            *val = lua_tointeger(L, -1);
+            if (cdb2_bind_param(cdb2->db, param, CDB2_INTEGER, val, sizeof(*val)) != 0) {
+                return luaL_error(L, cdb2_errstr(cdb2->db));
+            }
+        } else if (lua_isnumber(L, -1)) {
+            double *val = cdb2->param_value[idx] = malloc(sizeof(double));
+            *val = lua_tonumber(L, -1);
+            if (cdb2_bind_param(cdb2->db, param, CDB2_REAL, val, sizeof(*val)) != 0) {
+                return luaL_error(L, cdb2_errstr(cdb2->db));
+            }
+        }
+        break;
+    case LUA_TSTRING: {
+            char *val = cdb2->param_value[idx] = strdup(lua_tostring(L, -1));
+            if (cdb2_bind_param(cdb2->db, param, CDB2_CSTRING, val, strlen(val)) != 0) {
+                return luaL_error(L, cdb2_errstr(cdb2->db));
+            }
+        }
+        break;
+    case LUA_TNIL: {
+            if (cdb2_bind_param(cdb2->db, param, CDB2_CSTRING, NULL, 0) != 0) {
+                return luaL_error(L, cdb2_errstr(cdb2->db));
+            }
+        }
+        break;
+    default:
+        return luaL_error(L, "unsupported parameter type");
+    }
+    return 0;
+}
+
+static int comdb2_bind(Lua L)
+{
+    luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index, value");
+    if (lua_isinteger(L, 2)) return bind_index(L);
+    return bind_param(L);
 }
 
 struct iovec hex_to_binary(Lua L, const char *str)
@@ -237,7 +287,7 @@ struct iovec hex_to_binary(Lua L, const char *str)
     return v;
 }
 
-static int comdb2_bind_blob(Lua L)
+static int bind_index_blob(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (cdb2->running || cdb2->async) {
@@ -245,14 +295,38 @@ static int comdb2_bind_blob(Lua L)
     }
     luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index, value");
     int idx = lua_tointeger(L, 2);
-    if (cdb2->params[idx]) return luaL_error(L, "parameter already bound");
+    if (cdb2->param_value[idx]) return luaL_error(L, "parameter already bound");
     if (idx > cdb2->n_params) cdb2->n_params = idx;
     struct iovec blob = hex_to_binary(L, luaL_checkstring(L, 3));
-    cdb2->params[idx] = blob.iov_base;
+    cdb2->param_value[idx] = blob.iov_base;
     if (cdb2_bind_index(cdb2->db, idx, CDB2_BLOB, blob.iov_base, blob.iov_len) != 0) {
         return luaL_error(L, cdb2_errstr(cdb2->db));
     }
     return 0;
+}
+
+static int bind_param_blob(Lua L)
+{
+    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
+    if (cdb2->running || cdb2->async) {
+        return luaL_error(L, have_active_stmt);
+    }
+    luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index, value");
+    int idx = cdb2->n_params++;
+    char *param = cdb2->param_name[idx] = strdup(lua_tostring(L, 2));
+    struct iovec blob = hex_to_binary(L, luaL_checkstring(L, 3));
+    cdb2->param_value[idx] = blob.iov_base;
+    if (cdb2_bind_param(cdb2->db, param, CDB2_BLOB, blob.iov_base, blob.iov_len) != 0) {
+        return luaL_error(L, cdb2_errstr(cdb2->db));
+    }
+    return 0;
+}
+
+static int comdb2_bind_blob(Lua L)
+{
+    luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index, value");
+    if (lua_isinteger(L, 2)) return bind_index_blob(L);
+    return bind_param_blob(L);
 }
 
 static int column_name(Lua L)
