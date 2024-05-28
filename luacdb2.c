@@ -391,6 +391,26 @@ static int drain(Lua L)
     return 0;
 }
 
+static int get_effects(Lua L)
+{
+    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
+    if (cdb2->running || cdb2->async) return luaL_error(L, have_active_stmt);
+    cdb2_effects_tp e;
+    cdb2_get_effects(cdb2->db, &e);
+
+    lua_newtable(L);
+    lua_pushstring(L, "num_inserted");
+    lua_pushinteger(L, e.num_inserted);
+    lua_settable(L, -3);
+    lua_pushstring(L, "num_updated");
+    lua_pushinteger(L, e.num_updated);
+    lua_settable(L, -3);
+    lua_pushstring(L, "num_deleted");
+    lua_pushinteger(L, e.num_deleted);
+    lua_settable(L, -3);
+    return 1;
+}
+
 static int last_err(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
@@ -624,6 +644,7 @@ static void init_cdb2(Lua L)
         {"column_name", column_name},
         {"column_value", column_value},
         {"drain", drain},
+        {"get_effects", get_effects},
         {"last_err", last_err},
         {"next_record", next_record},
         {"num_columns", num_columns},
