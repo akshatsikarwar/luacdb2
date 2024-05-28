@@ -468,10 +468,12 @@ static int rd_stmt_int(Lua L, int fail)
     lua_pushboolean(L, 1);
     return 1;
 }
-static int rd_stmt(Lua L)
+
+static int run_statement(Lua L)
 {
     return rd_stmt_int(L, 1);
 }
+
 static int try_rd_stmt(Lua L)
 {
     return rd_stmt_int(L, 0);
@@ -649,7 +651,8 @@ static void init_cdb2(Lua L)
         {"next_record", next_record},
         {"num_columns", num_columns},
         {"querylimit_err", querylimit_err},
-        {"rd_stmt", rd_stmt},
+        {"rd_stmt", run_statement},
+        {"run_statement", run_statement},
         {"try_rd_stmt", try_rd_stmt},
         {"verify_err", verify_err},
         {"wr_stmt", wr_stmt},
