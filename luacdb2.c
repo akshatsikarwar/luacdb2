@@ -262,7 +262,7 @@ static int bind_param(Lua L)
 
 static int comdb2_bind(Lua L)
 {
-    luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index, value");
+    luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index/name, value");
     if (lua_isinteger(L, 2)) return bind_index(L);
     return bind_param(L);
 }
@@ -270,7 +270,7 @@ static int comdb2_bind(Lua L)
 struct iovec hex_to_binary(Lua L, const char *str)
 {
     size_t len = strlen(str);
-    if (len % 2) luaL_error(L, "comdb2_bind_blob: bad hex string");
+    if (len % 2) luaL_error(L, "bind_blob: bad hex string");
     struct iovec v;
     v.iov_base = malloc(len / 2);
     v.iov_len = len / 2;
@@ -283,7 +283,7 @@ struct iovec hex_to_binary(Lua L, const char *str)
     for (int i = 0; i < len; ++b) {
         uint8_t  first = map[str[i++]];
         uint8_t second = map[str[i++]];
-        if (first == invalid || second == invalid) luaL_error(L, "comdb2_bind_blob: bad hex string");
+        if (first == invalid || second == invalid) luaL_error(L, "bind_blob: bad hex string");
         *b = (first << 4) | second;
     }
     return v;
@@ -293,7 +293,6 @@ static int bind_index_blob(Lua L) /* 1-indexed */
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (cdb2->running || cdb2->async) return luaL_error(L, have_active_stmt);
-    luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index, value");
     int idx = lua_tointeger(L, 2);
     if (idx >= MAX_PARAMS) return luaL_error(L, "too many params");
     if (cdb2->param_value[idx]) return luaL_error(L, "parameter already bound");
@@ -311,7 +310,6 @@ static int bind_param_blob(Lua L)
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (cdb2->running || cdb2->async) return luaL_error(L, have_active_stmt);
     if (cdb2->n_params >= MAX_PARAMS) return luaL_error(L, "too many params");
-    luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index, value");
     int idx = cdb2->n_params++;
     char *param = cdb2->param_name[idx] = strdup(lua_tostring(L, 2));
     struct iovec blob = hex_to_binary(L, luaL_checkstring(L, 3));
@@ -322,9 +320,9 @@ static int bind_param_blob(Lua L)
     return 0;
 }
 
-static int comdb2_bind_blob(Lua L)
+static int bind_blob(Lua L)
 {
-    luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index, value");
+    luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index/name, value");
     if (lua_isinteger(L, 2)) return bind_index_blob(L);
     return bind_param_blob(L);
 }
@@ -641,7 +639,7 @@ static void init_cdb2(Lua L)
         {"__gc", __gc},
         {"async_stmt", async_stmt},
         {"bind", comdb2_bind},
-        {"bind_blob", comdb2_bind_blob},
+        {"bind_blob", bind_blob},
         {"close", __gc},
         {"column_name", column_name},
         {"column_value", column_value},
