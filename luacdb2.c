@@ -28,8 +28,8 @@ struct cdb2 {
     int running;
     cdb2_hndl_tp *db;
     int n_params;
-    void *param_value[32];
-    void *param_name[32];
+    void *param_value[MAX_PARAMS];
+    void *param_name[MAX_PARAMS];
     struct cdb2_async *async;
 };
 
@@ -45,6 +45,10 @@ struct cdb2_async {
 static void clear_params(struct cdb2 *cdb2)
 {
     for (int i = 1; i <= cdb2->n_params; ++i) {
+        if (cdb2->param_name[i]) {
+            free(cdb2->param_name[i]);
+            cdb2->param_name[i] = NULL;
+        }
         free(cdb2->param_value[i]);
         cdb2->param_value[i] = NULL;
     }
@@ -171,13 +175,12 @@ static int async_stmt(Lua L)
     return 0;
 }
 
-static int bind_index(Lua L)
+static int bind_index(Lua L) /* 1-indexed */
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running || cdb2->async) {
-        return luaL_error(L, have_active_stmt);
-    }
+    if (cdb2->running || cdb2->async) return luaL_error(L, have_active_stmt);
     int idx = lua_tointeger(L, 2);
+    if (idx >= MAX_PARAMS) return luaL_error(L, "too many params");
     if (cdb2->param_value[idx]) return luaL_error(L, "parameter already bound");
     if (idx > cdb2->n_params) cdb2->n_params = idx;
     switch (lua_type(L, -1)) {
@@ -218,9 +221,8 @@ static int bind_index(Lua L)
 static int bind_param(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running || cdb2->async) {
-        return luaL_error(L, have_active_stmt);
-    }
+    if (cdb2->running || cdb2->async) return luaL_error(L, have_active_stmt);
+    if (cdb2->n_params >= MAX_PARAMS) return luaL_error(L, "too many params");
     int idx = cdb2->n_params++;
     char *param = cdb2->param_name[idx] = strdup(lua_tostring(L, 2));
     switch (lua_type(L, -1)) {
@@ -287,14 +289,13 @@ struct iovec hex_to_binary(Lua L, const char *str)
     return v;
 }
 
-static int bind_index_blob(Lua L)
+static int bind_index_blob(Lua L) /* 1-indexed */
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running || cdb2->async) {
-        return luaL_error(L, have_active_stmt);
-    }
+    if (cdb2->running || cdb2->async) return luaL_error(L, have_active_stmt);
     luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index, value");
     int idx = lua_tointeger(L, 2);
+    if (idx >= MAX_PARAMS) return luaL_error(L, "too many params");
     if (cdb2->param_value[idx]) return luaL_error(L, "parameter already bound");
     if (idx > cdb2->n_params) cdb2->n_params = idx;
     struct iovec blob = hex_to_binary(L, luaL_checkstring(L, 3));
@@ -308,9 +309,8 @@ static int bind_index_blob(Lua L)
 static int bind_param_blob(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running || cdb2->async) {
-        return luaL_error(L, have_active_stmt);
-    }
+    if (cdb2->running || cdb2->async) return luaL_error(L, have_active_stmt);
+    if (cdb2->n_params >= MAX_PARAMS) return luaL_error(L, "too many params");
     luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index, value");
     int idx = cdb2->n_params++;
     char *param = cdb2->param_name[idx] = strdup(lua_tostring(L, 2));
