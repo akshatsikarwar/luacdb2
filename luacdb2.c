@@ -267,7 +267,7 @@ static int comdb2_bind(Lua L)
     return bind_param(L);
 }
 
-struct iovec hex_to_binary(Lua L, const char *str)
+static struct iovec hex_to_binary(Lua L, const char *str)
 {
     size_t len = strlen(str);
     if (len % 2) luaL_error(L, "bind_blob: bad hex string");
@@ -338,7 +338,7 @@ static int column_name(Lua L)
     return 1;
 }
 
-void binary_to_hex(Lua L, void *ptr, size_t len)
+static void binary_to_hex(Lua L, void *ptr, size_t len)
 {
     char *hex, *h;
     hex = h = alloca(len * 2 + 3 + 1);
