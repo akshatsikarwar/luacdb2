@@ -87,7 +87,7 @@ static int async_result(struct cdb2 *cdb2)
     return rc;
 }
 
-static int comdb2(Lua L)
+static int cdb2(Lua L)
 {
     int args = lua_gettop(L);
     if (args == 0) return luaL_argerror(L, 1, "dbname expected");
@@ -260,7 +260,7 @@ static int bind_param(Lua L)
     return 0;
 }
 
-static int comdb2_bind(Lua L)
+static int cdb2_bind(Lua L)
 {
     luaL_argcheck(L, lua_gettop(L) == 3, lua_gettop(L), "need: index/name, value");
     if (lua_isinteger(L, 2)) return bind_index(L);
@@ -608,8 +608,8 @@ static int luacdb2_setenv(Lua L)
 
 static void init_cdb2(Lua L)
 {
-    lua_pushcfunction(L, comdb2);
-    lua_setglobal(L, "comdb2");
+    lua_pushcfunction(L, cdb2);
+    lua_setglobal(L, "cdb2");
 
     lua_pushcfunction(L, comdb2db_info);
     lua_setglobal(L, "comdb2db_info");
@@ -638,7 +638,7 @@ static void init_cdb2(Lua L)
     const struct luaL_Reg cdb2_funcs[] = {
         {"__gc", __gc},
         {"async_stmt", async_stmt},
-        {"bind", comdb2_bind},
+        {"bind", cdb2_bind},
         {"bind_blob", bind_blob},
         {"close", __gc},
         {"column_name", column_name},
