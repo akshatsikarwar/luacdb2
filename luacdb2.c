@@ -674,16 +674,6 @@ static void init_cdb2(Lua L)
     lua_pop(L, 1);
 }
 
-static int error_handler(Lua L)
-{
-    const char *err = lua_tostring(L, -1);
-    if (!err) {
-        err = lua_pushstring(L, "successful error");
-    }
-    luaL_traceback(L, L, err, 1);
-    return 1;
-}
-
 int main(int argc, char **argv)
 {
     char *config_file = getenv("CDB2_CONFIG");
@@ -698,10 +688,7 @@ int main(int argc, char **argv)
         lua_rawseti(L, -2, i - 1);
     }
     lua_setglobal(L, "argv");
-    lua_pushcfunction(L, error_handler);
-    luaL_loadfile(L, argc > 1 ? argv[1] : NULL);
-    int rc = lua_pcall(L, 0, LUA_MULTRET, -2);
-    lua_remove(L, 1); //error_handler
+    int rc = luaL_dofile(L, argc > 1 ? argv[1] : NULL);
     if (rc) {
         fprintf(stderr, "%s\n", lua_tostring(L, 1));
     }
