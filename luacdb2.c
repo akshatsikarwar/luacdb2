@@ -93,8 +93,9 @@ static int cdb2(Lua L)
     if (args == 0) return luaL_argerror(L, 1, "dbname expected");
     if (args > 2) luaL_argerror(L, 3, "unexpected arguments");
     int flags = 0;
-    char *dbname = strdup(lua_tostring(L, 1));
-    char *tier = strdup(args != 2 ? "default" : lua_tostring(L, 2));
+
+    char *dbname = strdup(luaL_checkstring(L, 1));
+    char *tier = strdup(args != 2 ? "default" : luaL_checkstring(L, 2));
     if (tier[0] == '@') {
         if (strchr(tier, ',') == NULL) {
             flags |= CDB2_DIRECT_CPU;
