@@ -158,6 +158,18 @@ static int __gc(Lua L)
     return 0;
 }
 
+static int async_done(Lua L)
+{
+    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
+    if (!cdb2->async) return luaL_error(L, "no async statement");
+    struct cdb2_async *async = cdb2->async;
+    pthread_mutex_lock(&async->lock);
+    int done = async->done;
+    pthread_mutex_unlock(&async->lock);
+    lua_pushboolean(L, done);
+    return 1;
+}
+
 static int async_stmt(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
@@ -649,6 +661,7 @@ static void init_cdb2(Lua L)
 
     const struct luaL_Reg cdb2_funcs[] = {
         {"__gc", __gc},
+        {"async_done", async_done},
         {"async_stmt", async_stmt},
         {"bind", cdb2_bind},
         {"bind_blob", bind_blob},
