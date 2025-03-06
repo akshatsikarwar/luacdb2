@@ -1,3 +1,4 @@
+#include <alloca.h>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
@@ -543,6 +544,11 @@ static int querylimit_err(Lua L)
     return expect_err(L, CDB2ERR_QUERYLIMIT);
 }
 
+static int readonly_err(Lua L)
+{
+    return expect_err(L, CDB2ERR_READONLY);
+}
+
 static int wr_stmt(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
@@ -679,6 +685,7 @@ static void init_cdb2(Lua L)
         {"next_record", next_record},
         {"num_columns", num_columns},
         {"querylimit_err", querylimit_err},
+        {"readonly_err", readonly_err},
         {"rd_stmt", rd_stmt},
         {"run_statement", run_statement},
         {"try_rd_stmt", try_rd_stmt},
