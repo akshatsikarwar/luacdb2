@@ -13,6 +13,7 @@ find_package(PkgConfig REQUIRED)
 
 pkg_check_modules(LUA REQUIRED IMPORTED_TARGET lua53)
 pkg_check_modules(CDB2 REQUIRED IMPORTED_TARGET cdb2api)
+pkg_check_modules(UUID REQUIRED IMPORTED_TARGET uuid)
 
-target_include_directories(luacdb2 PRIVATE ${CDB2_INCLUDE_DIRS} ${LUA_INCLUDE_DIRS})
-target_link_libraries(luacdb2 PRIVATE ${CDB2_LINK_LIBRARIES} ${LUA_LINK_LIBRARIES} Threads::Threads)
+target_include_directories(luacdb2 PRIVATE ${CDB2_INCLUDE_DIRS} ${LUA_INCLUDE_DIRS} ${UUID_INCLUDE_DIRS})
+target_link_libraries(luacdb2 PRIVATE ${CDB2_LINK_LIBRARIES} ${LUA_LINK_LIBRARIES} ${UUID_LINK_LIBRARIES} Threads::Threads)

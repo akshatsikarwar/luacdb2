@@ -7,6 +7,7 @@
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <unistd.h>
+#include <uuid/uuid.h>
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -670,6 +671,16 @@ static int luacdb2_setenv(Lua L)
     return 0;
 }
 
+static int guid(Lua L)
+{
+    uuid_t id;
+    char id_str[37];
+    uuid_generate(id);
+    uuid_unparse_lower(id, id_str);
+    lua_pushstring(L, id_str);
+    return 1;
+}
+
 static void init_cdb2(Lua L)
 {
     lua_pushcfunction(L, cdb2);
@@ -698,6 +709,9 @@ static void init_cdb2(Lua L)
 
     lua_pushcfunction(L, luacdb2_setenv);
     lua_setglobal(L, "setenv");
+
+    lua_pushcfunction(L, guid);
+    lua_setglobal(L, "guid");
 
     const struct luaL_Reg cdb2_funcs[] = {
         {"__gc", __gc},
