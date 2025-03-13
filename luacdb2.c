@@ -284,6 +284,10 @@ static int cdb2_bind(Lua L)
 static struct iovec hex_to_binary(Lua L, const char *str)
 {
     size_t len = strlen(str);
+    if (str[0] == 'x' && str[1] == '\'' && str[len - 1] == '\'') {
+        str += 2;
+        len -= 3;
+    }
     if (len % 2) luaL_error(L, "bind_blob: bad hex string");
     struct iovec v;
     v.iov_base = malloc(len / 2);
