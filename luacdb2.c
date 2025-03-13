@@ -383,6 +383,16 @@ static void push_datetime(Lua L, cdb2_client_datetime_t *dt)
     lua_pushstring(L, buf);
 }
 
+static void push_datetimeus(Lua L, cdb2_client_datetimeus_t *dt)
+{
+    char buf[256];
+    sprintf(buf, "%4.4u-%2.2u-%2.2uT%2.2u%2.2u%2.2u.%3.6u %s",
+            dt->tm.tm_year + 1900, dt->tm.tm_mon + 1, dt->tm.tm_mday,
+            dt->tm.tm_hour, dt->tm.tm_min, dt->tm.tm_sec, dt->usec,
+            dt->tzname);
+    lua_pushstring(L, buf);
+}
+
 static int column_value(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
@@ -400,7 +410,8 @@ static int column_value(Lua L)
     case CDB2_REAL: lua_pushnumber(L, *(double *)cdb2_column_value(cdb2->db, column)); break;
     case CDB2_BLOB: binary_to_hex(L, cdb2_column_value(cdb2->db, column), cdb2_column_size(cdb2->db, column)); break;
     case CDB2_DATETIME: push_datetime(L, cdb2_column_value(cdb2->db, column)); break;
-    default: return luaL_error(L, "unsupported column type");
+    case CDB2_DATETIMEUS: push_datetimeus(L, cdb2_column_value(cdb2->db, column)); break;
+    default: return luaL_error(L, "unsupported column type for '%s'", cdb2_column_name(cdb2->db, column));
     }
     return 1;
 }
