@@ -524,11 +524,21 @@ static int try_rd_stmt(Lua L)
 
 static int expect_err(Lua L, int expected)
 {
+    int rc;
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (!cdb2->running) return luaL_error(L, no_active_stmt);
-    if (!cdb2->async) return luaL_error(L, "no async statement");
-    int rc = async_result(cdb2);
-    cdb2->running = 0;
+    const char *sql = luaL_checkstring(L, 2);
+    if (sql == NULL) {
+        if (!cdb2->running) return luaL_error(L, no_active_stmt);
+        if (!cdb2->async) return luaL_error(L, "no async statement");
+        rc = async_result(cdb2);
+        cdb2->running = 0;
+    } else {
+        if (cdb2->running || cdb2->async) {
+            return luaL_error(L, have_active_stmt);
+        }
+        rc = cdb2_run_statement(cdb2->db, sql);
+        clear_params(cdb2);
+    }
     if (rc == 0) {
         while ((rc = cdb2_next_record(cdb2->db)) == CDB2_OK)
             ;
@@ -547,6 +557,10 @@ static int expect_err(Lua L, int expected)
     cdb2_open(&cdb2->db, cdb2->dbname, cdb2->tier, 0);
     lua_pushboolean(L, 1);
     return 1;
+}
+static int duplicate_err(Lua L)
+{
+    return expect_err(L, CDB2ERR_DUPLICATE);
 }
 
 static int verify_err(Lua L)
@@ -695,6 +709,7 @@ static void init_cdb2(Lua L)
         {"column_name", column_name},
         {"column_value", column_value},
         {"drain", drain},
+        {"duplicate_err", duplicate_err},
         {"get_effects", get_effects},
         {"last_err", last_err},
         {"next_record", next_record},
