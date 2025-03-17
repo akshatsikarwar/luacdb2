@@ -21,8 +21,6 @@
 
 typedef lua_State *Lua;
 
-struct cdb2_async;
-
 struct cdb2 {
     char *dbname;
     char *tier;
@@ -32,12 +30,10 @@ struct cdb2 {
     int n_params;
     void *param_value[MAX_PARAMS];
     void *param_name[MAX_PARAMS];
-    struct cdb2_async *async;
-};
 
-struct cdb2_async {
+    int async;
     int done;
-    int result;
+    int rc;
     char *sql;
     pthread_mutex_t lock;
     pthread_cond_t cond;
@@ -56,37 +52,6 @@ static void clear_params(struct cdb2 *cdb2)
     }
     cdb2->n_params = 0;
     cdb2_clearbindings(cdb2->db);
-}
-
-static void *async_work(void *data)
-{
-    struct cdb2 *cdb2 = data;
-    struct cdb2_async *async = cdb2->async;
-    async->result = cdb2_run_statement(cdb2->db, async->sql);
-    clear_params(cdb2);
-    pthread_mutex_lock(&async->lock);
-    async->done = 1;
-    pthread_cond_signal(&async->cond);
-    pthread_mutex_unlock(&async->lock);
-    return NULL;
-}
-
-static int async_result(struct cdb2 *cdb2)
-{
-    struct cdb2_async *async = cdb2->async;
-    pthread_mutex_lock(&async->lock);
-    if (!async->done) {
-        pthread_cond_wait(&async->cond, &async->lock);
-    }
-    pthread_join(async->thd, NULL);
-    pthread_mutex_unlock(&async->lock);
-    pthread_mutex_destroy(&async->lock);
-    pthread_cond_destroy(&async->cond);
-    int rc = async->result;
-    free(async->sql);
-    free(cdb2->async);
-    cdb2->async = NULL;
-    return rc;
 }
 
 static int cdb2(Lua L)
@@ -119,6 +84,47 @@ static int cdb2(Lua L)
     lua_setmetatable(L, -2);
     return 1;
 }
+static void *async_worker(void * data)
+{
+    struct cdb2 *cdb2 = data;
+    pthread_mutex_lock(&cdb2->lock);
+    pthread_cond_signal(&cdb2->cond);
+    pthread_mutex_unlock(&cdb2->lock);
+
+    pthread_mutex_lock(&cdb2->lock);
+    pthread_cond_wait(&cdb2->cond, &cdb2->lock);
+    while (cdb2->async) {
+        pthread_mutex_unlock(&cdb2->lock);
+        cdb2->rc = cdb2_run_statement(cdb2->db, cdb2->sql);
+        free(cdb2->sql);
+        clear_params(cdb2);
+
+        pthread_mutex_lock(&cdb2->lock);
+        cdb2->done = 1;
+        pthread_cond_signal(&cdb2->cond);
+        pthread_mutex_unlock(&cdb2->lock);
+
+        pthread_mutex_lock(&cdb2->lock);
+        pthread_cond_wait(&cdb2->cond, &cdb2->lock);
+    }
+    pthread_mutex_unlock(&cdb2->lock);
+    return NULL;
+}
+
+static int cdb2x(Lua L)
+{
+    cdb2(L);
+    struct cdb2 *cdb2 = lua_touserdata(L, -1);
+    cdb2->async = 1;
+    pthread_mutex_init(&cdb2->lock, NULL);
+    pthread_cond_init(&cdb2->cond, NULL);
+
+    pthread_mutex_lock(&cdb2->lock);
+    pthread_create(&cdb2->thd, NULL, async_worker, cdb2);
+    pthread_cond_wait(&cdb2->cond, &cdb2->lock);
+    pthread_mutex_unlock(&cdb2->lock);
+    return 1;
+}
 
 static int comdb2db_info(Lua L)
 {
@@ -132,14 +138,31 @@ static int disable_sockpool(Lua L)
     return 0;
 }
 
+static void cdb2_wait(struct cdb2 *cdb2)
+{
+    if (cdb2->done) {
+        return;
+    }
+    pthread_cond_wait(&cdb2->cond, &cdb2->lock);
+    if (!cdb2->done) abort();
+}
+
 static int __gc(Lua L)
 {
     struct cdb2 *cdb2 = lua_touserdata(L, -1);
-    if (cdb2->async) {
-        fprintf(stderr,  "waiting for async statement completion\n");
-        async_result(cdb2);
-    } else if (cdb2->running) {
+    if (cdb2->running) {
         fprintf(stderr,  "closing active statement\n");
+    }
+    if (cdb2->async) {
+        pthread_mutex_lock(&cdb2->lock);
+        cdb2_wait(cdb2);
+        cdb2->async = 0;
+        pthread_cond_signal(&cdb2->cond);
+        pthread_mutex_unlock(&cdb2->lock);
+
+        pthread_join(cdb2->thd, NULL);
+        pthread_cond_destroy(&cdb2->cond);
+        pthread_mutex_destroy(&cdb2->lock);
     }
     if (cdb2->db) {
         cdb2_close(cdb2->db);
@@ -160,40 +183,10 @@ static int __gc(Lua L)
     return 0;
 }
 
-static int async_done(Lua L)
-{
-    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (!cdb2->async) return luaL_error(L, "no async statement");
-    struct cdb2_async *async = cdb2->async;
-    pthread_mutex_lock(&async->lock);
-    int done = async->done;
-    pthread_mutex_unlock(&async->lock);
-    lua_pushboolean(L, done);
-    return 1;
-}
-
-static int async_stmt(Lua L)
-{
-    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running || cdb2->async) {
-        return luaL_error(L, have_active_stmt);
-    }
-    const char *sql = luaL_checkstring(L, 2);
-    cdb2->running = 1;
-    cdb2->async = calloc(1, sizeof(struct cdb2_async));
-    cdb2->async->sql = strdup(sql);
-    pthread_mutex_init(&cdb2->async->lock, NULL);
-    pthread_cond_init(&cdb2->async->cond, NULL);
-    if (pthread_create(&cdb2->async->thd, NULL, async_work, cdb2) != 0) {
-        return luaL_error(L, "failed to create async statement");
-    }
-    return 0;
-}
-
 static int bind_index(Lua L) /* 1-indexed */
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running || cdb2->async) return luaL_error(L, have_active_stmt);
+    if (cdb2->running) return luaL_error(L, have_active_stmt);
     int idx = lua_tointeger(L, 2);
     if (idx >= MAX_PARAMS) return luaL_error(L, "too many params");
     if (cdb2->param_value[idx]) return luaL_error(L, "parameter already bound");
@@ -236,7 +229,7 @@ static int bind_index(Lua L) /* 1-indexed */
 static int bind_param(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running || cdb2->async) return luaL_error(L, have_active_stmt);
+    if (cdb2->running) return luaL_error(L, have_active_stmt);
     if (cdb2->n_params >= MAX_PARAMS) return luaL_error(L, "too many params");
     int idx = cdb2->n_params++;
     char *param = cdb2->param_name[idx] = strdup(lua_tostring(L, 2));
@@ -311,7 +304,7 @@ static struct iovec hex_to_binary(Lua L, const char *str)
 static int bind_index_blob(Lua L) /* 1-indexed */
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running || cdb2->async) return luaL_error(L, have_active_stmt);
+    if (cdb2->running) return luaL_error(L, have_active_stmt);
     int idx = lua_tointeger(L, 2);
     if (idx >= MAX_PARAMS) return luaL_error(L, "too many params");
     if (cdb2->param_value[idx]) return luaL_error(L, "parameter already bound");
@@ -327,7 +320,7 @@ static int bind_index_blob(Lua L) /* 1-indexed */
 static int bind_param_blob(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running || cdb2->async) return luaL_error(L, have_active_stmt);
+    if (cdb2->running) return luaL_error(L, have_active_stmt);
     if (cdb2->n_params >= MAX_PARAMS) return luaL_error(L, "too many params");
     int idx = cdb2->n_params++;
     char *param = cdb2->param_name[idx] = strdup(lua_tostring(L, 2));
@@ -421,7 +414,6 @@ static int drain(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (!cdb2->running) return luaL_error(L, no_active_stmt);
-    if (cdb2->async && async_result(cdb2)) return luaL_error(L, cdb2_errstr(cdb2->db));
     int rc;
     while ((rc = cdb2_next_record(cdb2->db)) == CDB2_OK)
         ;
@@ -433,7 +425,7 @@ static int drain(Lua L)
 static int get_effects(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running || cdb2->async) return luaL_error(L, have_active_stmt);
+    if (cdb2->running) return luaL_error(L, have_active_stmt);
     cdb2_effects_tp e;
     cdb2_get_effects(cdb2->db, &e);
 
@@ -453,7 +445,7 @@ static int get_effects(Lua L)
 static int last_err(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running || cdb2->async) return luaL_error(L, have_active_stmt);
+    if (cdb2->running) return luaL_error(L, have_active_stmt);
     lua_pushstring(L, cdb2->errstr);
     return 1;
 }
@@ -462,8 +454,16 @@ static int next_record(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (!cdb2->running) return luaL_error(L, no_active_stmt);
-    if (cdb2->async && async_result(cdb2)) return luaL_error(L, cdb2_errstr(cdb2->db));
-    int rc = cdb2_next_record(cdb2->db);
+    int rc;
+    if (cdb2->async && !cdb2->done) {
+        pthread_mutex_lock(&cdb2->lock);
+        cdb2_wait(cdb2);
+        pthread_mutex_unlock(&cdb2->lock);
+        if (cdb2->rc != 0) {
+            return luaL_error(L, "async cdb2_run_statement rc:%d err:%s", rc, cdb2_errstr(cdb2->db));
+        }
+    }
+    rc = cdb2_next_record(cdb2->db);
     if (rc == CDB2_OK) {
         lua_pushboolean(L, 1);
     } else if (rc == CDB2_OK_DONE) {
@@ -471,9 +471,9 @@ static int next_record(Lua L)
         lua_pushboolean(L, 0);
     } else {
         cdb2->running = 0;
-        fprintf(stderr, "%s\n", cdb2_errstr(cdb2->db));
-        lua_pushstring(L, cdb2_errstr(cdb2->db));
-        //return luaL_error(L, cdb2_errstr(cdb2->db));
+        //fprintf(stderr, "%s\n", cdb2_errstr(cdb2->db));
+        //lua_pushstring(L, cdb2_errstr(cdb2->db));
+        return luaL_error(L, cdb2_errstr(cdb2->db));
     }
     return 1;
 }
@@ -491,10 +491,20 @@ static int num_columns(Lua L)
 static int rd_stmt_int(Lua L, int fail)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running || cdb2->async) {
+    if (cdb2->running) {
         return luaL_error(L, have_active_stmt);
     }
     const char *sql = luaL_checkstring(L, 2);
+    if (cdb2->async) {
+        pthread_mutex_lock(&cdb2->lock);
+        cdb2->sql = strdup(sql);
+        cdb2->running = 1;
+        cdb2->done = 0;
+        pthread_cond_signal(&cdb2->cond);
+        pthread_mutex_unlock(&cdb2->lock);
+        lua_pushboolean(L, 1);
+        return 1;
+    }
     if (cdb2_run_statement(cdb2->db, sql) != 0) {
         if (fail) return luaL_error(L, cdb2_errstr(cdb2->db));
         fprintf(stderr, "%s\n", cdb2_errstr(cdb2->db));
@@ -528,18 +538,11 @@ static int expect_err(Lua L, int expected)
     int rc;
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     const char *sql = luaL_checkstring(L, 2);
-    if (sql == NULL) {
-        if (!cdb2->running) return luaL_error(L, no_active_stmt);
-        if (!cdb2->async) return luaL_error(L, "no async statement");
-        rc = async_result(cdb2);
-        cdb2->running = 0;
-    } else {
-        if (cdb2->running || cdb2->async) {
+    if (cdb2->running) {
             return luaL_error(L, have_active_stmt);
-        }
-        rc = cdb2_run_statement(cdb2->db, sql);
-        clear_params(cdb2);
     }
+    rc = cdb2_run_statement(cdb2->db, sql);
+    clear_params(cdb2);
     if (rc == 0) {
         while ((rc = cdb2_next_record(cdb2->db)) == CDB2_OK)
             ;
@@ -582,7 +585,7 @@ static int readonly_err(Lua L)
 static int wr_stmt(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running || cdb2->async) {
+    if (cdb2->running) {
         return luaL_error(L, have_active_stmt);
     }
     const char *sql = luaL_checkstring(L, 2);
@@ -686,6 +689,9 @@ static void init_cdb2(Lua L)
     lua_pushcfunction(L, cdb2);
     lua_setglobal(L, "cdb2");
 
+    lua_pushcfunction(L, cdb2x);
+    lua_setglobal(L, "cdb2x");
+
     lua_pushcfunction(L, comdb2db_info);
     lua_setglobal(L, "comdb2db_info");
 
@@ -715,8 +721,6 @@ static void init_cdb2(Lua L)
 
     const struct luaL_Reg cdb2_funcs[] = {
         {"__gc", __gc},
-        {"async_done", async_done},
-        {"async_stmt", async_stmt},
         {"bind", cdb2_bind},
         {"bind_blob", bind_blob},
         {"close", __gc},
