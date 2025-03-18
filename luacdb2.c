@@ -21,18 +21,21 @@
 
 typedef lua_State *Lua;
 
+static int die = 0;
+#define luacdb2_error(...) ({ die = 1; luaL_error(__VA_ARGS__); })
+
 struct cdb2 {
     char *dbname;
     char *tier;
     char *errstr;
-    int running;
     cdb2_hndl_tp *db;
     int n_params;
     void *param_value[MAX_PARAMS];
     void *param_name[MAX_PARAMS];
 
     int async;
-    int done;
+    int done_run_stmt;
+    int running; /* keep calling cdb2_next_record */
     int rc;
     char *sql;
     pthread_mutex_t lock;
@@ -73,7 +76,7 @@ static int cdb2(Lua L)
     }
     cdb2_hndl_tp *db = NULL;
     if (cdb2_open(&db, dbname, tier, flags) != 0 || !db) {
-        return luaL_error(L, cdb2_errstr(db));
+        return luacdb2_error(L, cdb2_errstr(db));
     }
     struct cdb2 *cdb2 = lua_newuserdata(L, sizeof(struct cdb2));
     memset(cdb2, 0, sizeof(struct cdb2));
@@ -100,7 +103,7 @@ static void *async_worker(void * data)
         clear_params(cdb2);
 
         pthread_mutex_lock(&cdb2->lock);
-        cdb2->done = 1;
+        cdb2->done_run_stmt = 1;
         pthread_cond_signal(&cdb2->cond);
         pthread_mutex_unlock(&cdb2->lock);
 
@@ -140,15 +143,29 @@ static int disable_sockpool(Lua L)
 
 static void cdb2_wait(struct cdb2 *cdb2)
 {
-    if (cdb2->done) {
+    if (cdb2->done_run_stmt) {
         return;
     }
     pthread_cond_wait(&cdb2->cond, &cdb2->lock);
-    if (!cdb2->done) abort();
+    if (!cdb2->done_run_stmt) abort();
+}
+
+static void cdb2_dispatch(Lua L, struct cdb2 *cdb2, const char *sql)
+{
+    pthread_mutex_lock(&cdb2->lock);
+    if (cdb2->running) {
+        luacdb2_error(L, have_active_stmt);
+    }
+    cdb2->sql = strdup(sql);
+    cdb2->running = 1;
+    cdb2->done_run_stmt = 0;
+    pthread_cond_signal(&cdb2->cond);
+    pthread_mutex_unlock(&cdb2->lock);
 }
 
 static int __gc(Lua L)
 {
+    if (die) return 0;
     struct cdb2 *cdb2 = lua_touserdata(L, -1);
     if (cdb2->running) {
         fprintf(stderr,  "closing active statement\n");
@@ -186,10 +203,10 @@ static int __gc(Lua L)
 static int bind_index(Lua L) /* 1-indexed */
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running) return luaL_error(L, have_active_stmt);
+    if (cdb2->running) return luacdb2_error(L, have_active_stmt);
     int idx = lua_tointeger(L, 2);
-    if (idx >= MAX_PARAMS) return luaL_error(L, "too many params");
-    if (cdb2->param_value[idx]) return luaL_error(L, "parameter already bound");
+    if (idx >= MAX_PARAMS) return luacdb2_error(L, "too many params");
+    if (cdb2->param_value[idx]) return luacdb2_error(L, "parameter already bound");
     if (idx > cdb2->n_params) cdb2->n_params = idx;
     switch (lua_type(L, -1)) {
     case LUA_TNUMBER:
@@ -197,31 +214,31 @@ static int bind_index(Lua L) /* 1-indexed */
             int64_t *val = cdb2->param_value[idx] = malloc(sizeof(int64_t));
             *val = lua_tointeger(L, -1);
             if (cdb2_bind_index(cdb2->db, idx, CDB2_INTEGER, val, sizeof(*val)) != 0) {
-                return luaL_error(L, cdb2_errstr(cdb2->db));
+                return luacdb2_error(L, cdb2_errstr(cdb2->db));
             }
         } else if (lua_isnumber(L, -1)) {
             double *val = cdb2->param_value[idx] = malloc(sizeof(double));
             *val = lua_tonumber(L, -1);
             if (cdb2_bind_index(cdb2->db, idx, CDB2_REAL, val, sizeof(*val)) != 0) {
-                return luaL_error(L, cdb2_errstr(cdb2->db));
+                return luacdb2_error(L, cdb2_errstr(cdb2->db));
             }
         }
         break;
     case LUA_TSTRING: {
             char *val = cdb2->param_value[idx] = strdup(lua_tostring(L, -1));
             if (cdb2_bind_index(cdb2->db, idx, CDB2_CSTRING, val, strlen(val)) != 0) {
-                return luaL_error(L, cdb2_errstr(cdb2->db));
+                return luacdb2_error(L, cdb2_errstr(cdb2->db));
             }
         }
         break;
     case LUA_TNIL: {
             if (cdb2_bind_index(cdb2->db, idx, CDB2_CSTRING, NULL, 0) != 0) {
-                return luaL_error(L, cdb2_errstr(cdb2->db));
+                return luacdb2_error(L, cdb2_errstr(cdb2->db));
             }
         }
         break;
     default:
-        return luaL_error(L, "unsupported parameter type");
+        return luacdb2_error(L, "unsupported parameter type");
     }
     return 0;
 }
@@ -229,8 +246,8 @@ static int bind_index(Lua L) /* 1-indexed */
 static int bind_param(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running) return luaL_error(L, have_active_stmt);
-    if (cdb2->n_params >= MAX_PARAMS) return luaL_error(L, "too many params");
+    if (cdb2->running) return luacdb2_error(L, have_active_stmt);
+    if (cdb2->n_params >= MAX_PARAMS) return luacdb2_error(L, "too many params");
     int idx = cdb2->n_params++;
     char *param = cdb2->param_name[idx] = strdup(lua_tostring(L, 2));
     switch (lua_type(L, -1)) {
@@ -239,31 +256,31 @@ static int bind_param(Lua L)
             int64_t *val = cdb2->param_value[idx] = malloc(sizeof(int64_t));
             *val = lua_tointeger(L, -1);
             if (cdb2_bind_param(cdb2->db, param, CDB2_INTEGER, val, sizeof(*val)) != 0) {
-                return luaL_error(L, cdb2_errstr(cdb2->db));
+                return luacdb2_error(L, cdb2_errstr(cdb2->db));
             }
         } else if (lua_isnumber(L, -1)) {
             double *val = cdb2->param_value[idx] = malloc(sizeof(double));
             *val = lua_tonumber(L, -1);
             if (cdb2_bind_param(cdb2->db, param, CDB2_REAL, val, sizeof(*val)) != 0) {
-                return luaL_error(L, cdb2_errstr(cdb2->db));
+                return luacdb2_error(L, cdb2_errstr(cdb2->db));
             }
         }
         break;
     case LUA_TSTRING: {
             char *val = cdb2->param_value[idx] = strdup(lua_tostring(L, -1));
             if (cdb2_bind_param(cdb2->db, param, CDB2_CSTRING, val, strlen(val)) != 0) {
-                return luaL_error(L, cdb2_errstr(cdb2->db));
+                return luacdb2_error(L, cdb2_errstr(cdb2->db));
             }
         }
         break;
     case LUA_TNIL: {
             if (cdb2_bind_param(cdb2->db, param, CDB2_CSTRING, NULL, 0) != 0) {
-                return luaL_error(L, cdb2_errstr(cdb2->db));
+                return luacdb2_error(L, cdb2_errstr(cdb2->db));
             }
         }
         break;
     default:
-        return luaL_error(L, "unsupported parameter type");
+        return luacdb2_error(L, "unsupported parameter type");
     }
     return 0;
 }
@@ -282,7 +299,7 @@ static struct iovec hex_to_binary(Lua L, const char *str)
         str += 2;
         len -= 3;
     }
-    if (len % 2) luaL_error(L, "bind_blob: bad hex string");
+    if (len % 2) luacdb2_error(L, "bind_blob: bad hex string");
     struct iovec v;
     v.iov_base = malloc(len / 2);
     v.iov_len = len / 2;
@@ -295,7 +312,7 @@ static struct iovec hex_to_binary(Lua L, const char *str)
     for (int i = 0; i < len; ++b) {
         uint8_t  first = map[str[i++]];
         uint8_t second = map[str[i++]];
-        if (first == invalid || second == invalid) luaL_error(L, "bind_blob: bad hex string");
+        if (first == invalid || second == invalid) luacdb2_error(L, "bind_blob: bad hex string");
         *b = (first << 4) | second;
     }
     return v;
@@ -304,15 +321,15 @@ static struct iovec hex_to_binary(Lua L, const char *str)
 static int bind_index_blob(Lua L) /* 1-indexed */
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running) return luaL_error(L, have_active_stmt);
+    if (cdb2->running) return luacdb2_error(L, have_active_stmt);
     int idx = lua_tointeger(L, 2);
-    if (idx >= MAX_PARAMS) return luaL_error(L, "too many params");
-    if (cdb2->param_value[idx]) return luaL_error(L, "parameter already bound");
+    if (idx >= MAX_PARAMS) return luacdb2_error(L, "too many params");
+    if (cdb2->param_value[idx]) return luacdb2_error(L, "parameter already bound");
     if (idx > cdb2->n_params) cdb2->n_params = idx;
     struct iovec blob = hex_to_binary(L, luaL_checkstring(L, 3));
     cdb2->param_value[idx] = blob.iov_base;
     if (cdb2_bind_index(cdb2->db, idx, CDB2_BLOB, blob.iov_base, blob.iov_len) != 0) {
-        return luaL_error(L, cdb2_errstr(cdb2->db));
+        return luacdb2_error(L, cdb2_errstr(cdb2->db));
     }
     return 0;
 }
@@ -320,14 +337,14 @@ static int bind_index_blob(Lua L) /* 1-indexed */
 static int bind_param_blob(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running) return luaL_error(L, have_active_stmt);
-    if (cdb2->n_params >= MAX_PARAMS) return luaL_error(L, "too many params");
+    if (cdb2->running) return luacdb2_error(L, have_active_stmt);
+    if (cdb2->n_params >= MAX_PARAMS) return luacdb2_error(L, "too many params");
     int idx = cdb2->n_params++;
     char *param = cdb2->param_name[idx] = strdup(lua_tostring(L, 2));
     struct iovec blob = hex_to_binary(L, luaL_checkstring(L, 3));
     cdb2->param_value[idx] = blob.iov_base;
     if (cdb2_bind_param(cdb2->db, param, CDB2_BLOB, blob.iov_base, blob.iov_len) != 0) {
-        return luaL_error(L, cdb2_errstr(cdb2->db));
+        return luacdb2_error(L, cdb2_errstr(cdb2->db));
     }
     return 0;
 }
@@ -343,7 +360,7 @@ static int column_name(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (!cdb2->running) {
-        return luaL_error(L, no_active_stmt);
+        return luacdb2_error(L, no_active_stmt);
     }
     int col = luaL_checkinteger(L, 2) - 1;
     lua_pushstring(L, cdb2_column_name(cdb2->db, col));
@@ -391,7 +408,7 @@ static int column_value(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (!cdb2->running) {
-        return luaL_error(L, no_active_stmt);
+        return luacdb2_error(L, no_active_stmt);
     }
     int column = luaL_checkinteger(L, 2) - 1;
     if (cdb2_column_value(cdb2->db, column) == NULL) {
@@ -405,7 +422,7 @@ static int column_value(Lua L)
     case CDB2_BLOB: binary_to_hex(L, cdb2_column_value(cdb2->db, column), cdb2_column_size(cdb2->db, column)); break;
     case CDB2_DATETIME: push_datetime(L, cdb2_column_value(cdb2->db, column)); break;
     case CDB2_DATETIMEUS: push_datetimeus(L, cdb2_column_value(cdb2->db, column)); break;
-    default: return luaL_error(L, "unsupported column type for '%s'", cdb2_column_name(cdb2->db, column));
+    default: return luacdb2_error(L, "unsupported column type for '%s'", cdb2_column_name(cdb2->db, column));
     }
     return 1;
 }
@@ -413,11 +430,19 @@ static int column_value(Lua L)
 static int drain(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (!cdb2->running) return luaL_error(L, no_active_stmt);
+    if (!cdb2->running) return luacdb2_error(L, no_active_stmt);
+    if (cdb2->async) {
+        pthread_mutex_lock(&cdb2->lock);
+        cdb2_wait(cdb2);
+        pthread_mutex_unlock(&cdb2->lock);
+        if (cdb2->rc != 0) {
+            return luacdb2_error(L, "async cdb2_run_statement rc:%d err:%s", cdb2->rc, cdb2_errstr(cdb2->db));
+        }
+    }
     int rc;
     while ((rc = cdb2_next_record(cdb2->db)) == CDB2_OK)
         ;
-    if (rc != CDB2_OK_DONE) return luaL_error(L, "rc:%d err:%s", rc, cdb2_errstr(cdb2->db));
+    if (rc != CDB2_OK_DONE) return luacdb2_error(L, "rc:%d err:%s", rc, cdb2_errstr(cdb2->db));
     cdb2->running = 0;
     return 0;
 }
@@ -425,7 +450,7 @@ static int drain(Lua L)
 static int get_effects(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running) return luaL_error(L, have_active_stmt);
+    if (cdb2->running) return luacdb2_error(L, have_active_stmt);
     cdb2_effects_tp e;
     cdb2_get_effects(cdb2->db, &e);
 
@@ -445,7 +470,7 @@ static int get_effects(Lua L)
 static int last_err(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (cdb2->running) return luaL_error(L, have_active_stmt);
+    if (cdb2->running) return luacdb2_error(L, have_active_stmt);
     lua_pushstring(L, cdb2->errstr);
     return 1;
 }
@@ -453,17 +478,16 @@ static int last_err(Lua L)
 static int next_record(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
-    if (!cdb2->running) return luaL_error(L, no_active_stmt);
-    int rc;
-    if (cdb2->async && !cdb2->done) {
+    if (!cdb2->running) return luacdb2_error(L, no_active_stmt);
+    if (cdb2->async) {
         pthread_mutex_lock(&cdb2->lock);
         cdb2_wait(cdb2);
         pthread_mutex_unlock(&cdb2->lock);
         if (cdb2->rc != 0) {
-            return luaL_error(L, "async cdb2_run_statement rc:%d err:%s", rc, cdb2_errstr(cdb2->db));
+            return luacdb2_error(L, "async cdb2_run_statement rc:%d err:%s", cdb2->rc, cdb2_errstr(cdb2->db));
         }
     }
-    rc = cdb2_next_record(cdb2->db);
+    int rc = cdb2_next_record(cdb2->db);
     if (rc == CDB2_OK) {
         lua_pushboolean(L, 1);
     } else if (rc == CDB2_OK_DONE) {
@@ -471,9 +495,7 @@ static int next_record(Lua L)
         lua_pushboolean(L, 0);
     } else {
         cdb2->running = 0;
-        //fprintf(stderr, "%s\n", cdb2_errstr(cdb2->db));
-        //lua_pushstring(L, cdb2_errstr(cdb2->db));
-        return luaL_error(L, cdb2_errstr(cdb2->db));
+        return luacdb2_error(L, cdb2_errstr(cdb2->db));
     }
     return 1;
 }
@@ -482,7 +504,7 @@ static int num_columns(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (!cdb2->running) {
-        return luaL_error(L, no_active_stmt);
+        return luacdb2_error(L, no_active_stmt);
     }
     lua_pushinteger(L, cdb2_numcolumns(cdb2->db));
     return 1;
@@ -492,21 +514,16 @@ static int rd_stmt_int(Lua L, int fail)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (cdb2->running) {
-        return luaL_error(L, have_active_stmt);
+        return luacdb2_error(L, have_active_stmt);
     }
     const char *sql = luaL_checkstring(L, 2);
     if (cdb2->async) {
-        pthread_mutex_lock(&cdb2->lock);
-        cdb2->sql = strdup(sql);
-        cdb2->running = 1;
-        cdb2->done = 0;
-        pthread_cond_signal(&cdb2->cond);
-        pthread_mutex_unlock(&cdb2->lock);
+        cdb2_dispatch(L, cdb2, sql);
         lua_pushboolean(L, 1);
         return 1;
     }
     if (cdb2_run_statement(cdb2->db, sql) != 0) {
-        if (fail) return luaL_error(L, cdb2_errstr(cdb2->db));
+        if (fail) return luacdb2_error(L, cdb2_errstr(cdb2->db));
         fprintf(stderr, "%s\n", cdb2_errstr(cdb2->db));
         lua_pushboolean(L, 0);
         return 1;
@@ -539,7 +556,7 @@ static int expect_err(Lua L, int expected)
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     const char *sql = luaL_checkstring(L, 2);
     if (cdb2->running) {
-            return luaL_error(L, have_active_stmt);
+            return luacdb2_error(L, have_active_stmt);
     }
     rc = cdb2_run_statement(cdb2->db, sql);
     clear_params(cdb2);
@@ -552,7 +569,7 @@ static int expect_err(Lua L, int expected)
         }
     }
     if (rc != expected) {
-        return luaL_error(L, "expected:%d rc:%d err:%s", expected, rc, cdb2_errstr(cdb2->db));
+        return luacdb2_error(L, "expected:%d rc:%d err:%s", expected, rc, cdb2_errstr(cdb2->db));
     }
     free(cdb2->errstr);
     cdb2->errstr = strdup(cdb2_errstr(cdb2->db));
@@ -562,6 +579,7 @@ static int expect_err(Lua L, int expected)
     lua_pushboolean(L, 1);
     return 1;
 }
+
 static int duplicate_err(Lua L)
 {
     return expect_err(L, CDB2ERR_DUPLICATE);
@@ -586,11 +604,16 @@ static int wr_stmt(Lua L)
 {
     struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
     if (cdb2->running) {
-        return luaL_error(L, have_active_stmt);
+        return luacdb2_error(L, have_active_stmt);
     }
     const char *sql = luaL_checkstring(L, 2);
-    if (cdb2_run_statement(cdb2->db, sql) != 0) {
-        return luaL_error(L, cdb2_errstr(cdb2->db));
+    if (cdb2->async) {
+        cdb2_dispatch(L, cdb2, sql);
+        return 0;
+    }
+    int rc = cdb2_run_statement(cdb2->db, sql);
+    if (rc) {
+        return luacdb2_error(L, "rc:%d err:%s", rc, cdb2_errstr(cdb2->db));
     }
     clear_params(cdb2);
     cdb2->running = 1;
