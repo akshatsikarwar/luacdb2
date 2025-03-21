@@ -21,6 +21,9 @@
 
 typedef lua_State *Lua;
 
+static uint8_t invalid_hex = 'x';
+static uint8_t hex_map[255] = { 'x' };
+
 static int die = 0;
 #define luacdb2_error(...) ({ die = 1; luaL_error(__VA_ARGS__); })
 
@@ -292,6 +295,13 @@ static int cdb2_bind(Lua L)
     return bind_param(L);
 }
 
+static void hex_init(void)
+{
+    for (int i = '0'; i <= '9'; ++i) hex_map[i] = i - '0';
+    for (int i = 'A'; i <= 'F'; ++i) hex_map[i] = i - 'A' + 10;
+    for (int i = 'a'; i <= 'f'; ++i) hex_map[i] = i - 'a' + 10;
+}
+
 static struct iovec hex_to_binary(Lua L, const char *str)
 {
     size_t len = strlen(str);
@@ -299,20 +309,20 @@ static struct iovec hex_to_binary(Lua L, const char *str)
         str += 2;
         len -= 3;
     }
-    if (len % 2) luacdb2_error(L, "bind_blob: bad hex string");
     struct iovec v;
+    if (len == 0) {
+        v.iov_base = malloc(0);
+        v.iov_len = 0;
+        return v;
+    }
+    if (len % 2) luacdb2_error(L, "bind_blob: bad hex string");
     v.iov_base = malloc(len / 2);
     v.iov_len = len / 2;
     uint8_t *b = v.iov_base;
-    uint8_t invalid = 'Z';
-    uint8_t map[255] = { invalid };
-    for (int i = '0'; i <= '9'; ++i) map[i] = i - '0';
-    for (int i = 'A'; i <= 'F'; ++i) map[i] = i - 'A' + 10;
-    for (int i = 'a'; i <= 'f'; ++i) map[i] = i - 'a' + 10;
     for (int i = 0; i < len; ++b) {
-        uint8_t  first = map[str[i++]];
-        uint8_t second = map[str[i++]];
-        if (first == invalid || second == invalid) luacdb2_error(L, "bind_blob: bad hex string");
+        uint8_t  first = hex_map[str[i++]];
+        uint8_t second = hex_map[str[i++]];
+        if (first == invalid_hex || second == invalid_hex) luacdb2_error(L, "bind_blob: bad hex string");
         *b = (first << 4) | second;
     }
     return v;
@@ -725,6 +735,8 @@ static int guid(Lua L)
 
 static void init_cdb2(Lua L)
 {
+    hex_init();
+
     lua_pushcfunction(L, cdb2);
     lua_setglobal(L, "cdb2");
 
