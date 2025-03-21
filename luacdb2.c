@@ -367,6 +367,22 @@ static int column_name(Lua L)
     return 1;
 }
 
+static int column_type(Lua L)
+{
+    struct cdb2 *cdb2 = luaL_checkudata(L, 1, "cdb2");
+    if (!cdb2->running) {
+        return luacdb2_error(L, no_active_stmt);
+    }
+    int col = luaL_checkinteger(L, 2) - 1;
+    switch (cdb2_column_type(cdb2->db, col)) {
+    case CDB2_INTEGER: lua_pushstring(L, "integer"); return 1;
+    case CDB2_CSTRING: lua_pushstring(L, "string"); return 1;
+    case CDB2_REAL: lua_pushstring(L, "double"); return 1;
+    case CDB2_BLOB: lua_pushstring(L, "blob"); return 1;
+    default: return luacdb2_error(L, "unimplemented type:%d", cdb2_column_type(cdb2->db, col));
+    }
+}
+
 static void binary_to_hex(Lua L, void *ptr, size_t len)
 {
     char *hex, *h;
@@ -748,6 +764,7 @@ static void init_cdb2(Lua L)
         {"bind_blob", bind_blob},
         {"close", __gc},
         {"column_name", column_name},
+        {"column_type", column_type},
         {"column_value", column_value},
         {"drain", drain},
         {"duplicate_err", duplicate_err},
